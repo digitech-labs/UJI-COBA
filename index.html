@@ -1,0 +1,1744 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ASTAGA - Asisten Sistem Terpadu Guru Al Kautsar</title>
+  
+  <script>
+    window.deferredPWA = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      window.deferredPWA = e;
+    });
+
+    // Injeksi Service Worker dummy agar trigger Install App bawaan HP dijamin aktif!
+    try {
+      if ('serviceWorker' in navigator) {
+        const swCode = `
+          self.addEventListener('install', (e) => self.skipWaiting());
+          self.addEventListener('activate', (e) => self.clients.claim());
+          self.addEventListener('fetch', (e) => {});
+        `;
+        const blob = new Blob([swCode], {type: 'text/javascript'});
+        const swUrl = URL.createObjectURL(blob);
+        navigator.serviceWorker.register(swUrl).catch(function(err) {});
+      }
+    } catch(e) {}
+  </script>
+
+  <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiQVNUQUdBIC0gQXNpc3RlbiBHdXJ1Iiwic2hvcnRfbmFtZSI6IkFTVEFHQSIsInN0YXJ0X3VybCI6Ii4vIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiI2Y4ZmFmYyIsInRoZW1lX2NvbG9yIjoiIzRmNDZlNSIsImljb25zIjpbeyJzcmMiOiJpY29uLnBuZyIsInNpemVzIjoiMTkyeDE5MiIsInR5cGUiOiJpbWFnZS9wbmciLCJwdXJwb3NlIjoiYW55IG1hc2thYmxlIn0seyJzcmMiOiJpY29uLnBuZyIsInNpemVzIjoiNTEyeDUxMiIsInR5cGUiOiJpbWFnZS9wbmciLCJwdXJwb3NlIjoiYW55IG1hc2thYmxlIn1dfQ==" />
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+    body, html, #root { font-family: 'Inter', sans-serif; height: 100%; margin: 0; padding: 0; overflow: hidden; background-color: #f8fafc; }
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    input:focus { outline: none !important; }
+    thead { position: sticky; top: 0; z-index: 80; }
+  </style>
+</head>
+<body class="text-slate-900 antialiased text-xs">
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react,env">
+    /** @jsx React.createElement */
+    /** @jsxFrag React.Fragment */
+    
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4kVdn7U-DcRxkeSEUaRb9Pv2yXKPdmnI34bZDlXJ1zYWcRolhrNSD-ctGpS_MjV3b/exec';
+    
+    const APP_VERSION = "5.0.1-VIP";
+    const APP_CHANGELOG = [
+      "🚀 Paksa Install Aktif: Tidak ada lagi panduan klik 3 titik manual. Tombol install akan langsung memunculkan pop-up instalasi asli dari HP!",
+      "🗜️ Tweak Tombol Aksi: Barisan tombol Unduh, Upload, dll sekarang didesain mini nan padat. Tidak usah digeser-geser lagi, langsung klik!",
+      "📱 Super Layout Mobile: Menu list kelas kini digeser ke samping (Scroll Horisontal 2 baris). Bikin tabel nilai lega & gak sembunyi lagi!",
+      "🔒 Validasi KKM: Dilarang keras kirim nilai di bawah 70 (merah)! Sistem akan menolak otomatis.",
+      "⚡ Validasi UH: Bebas nilai kembar! Sekarang boleh mengisi nilai yang sama persis, yang penting wajib isi minimal 2 UH."
+    ];
+
+    const KOCAK_EMPTY_WARNINGS = [
+      "Kosong banget kayak hati jomblo! 😭 Isi nilainya minimal satu aja dong biar ada yang dikirim~ ☁️"
+    ];
+
+    const DEFAULT_MAPELS = [
+      "PENDIDIKAN AGAMA ISLAM", "KEMUHAMMADIYAHAN", "PENDIDIKAN PANCASILA",
+      "BAHASA INDONESIA", "ILMU PENGETAHUAN ALAM DAN SOSIAL", "MATEMATIKA",
+      "PENDIDIKAN JASMANI, OLAHRAGA DAN KESEHATAN", "BAHASA INGGRIS", "KESENIAN", 
+      "KODING", "BAHASA JAWA", "BAHASA ARAB", "IBADAH (WUDHU, TAYAMUM, SHALAT)", 
+      "TAHFIDZ", "IQRA'"
+    ];
+
+    const sortMapels = (mapelsArr) => {
+      return [...mapelsArr].sort((a, b) => {
+        const idxA = DEFAULT_MAPELS.indexOf(a);
+        const idxB = DEFAULT_MAPELS.indexOf(b);
+        if (idxA === -1 && idxB === -1) return a.localeCompare(b);
+        if (idxA === -1) return 1;
+        if (idxB === -1) return -1;
+        return idxA - idxB;
+      });
+    };
+
+    const ITEM_BG_COLORS = ['bg-sky-100', 'bg-emerald-100', 'bg-amber-100', 'bg-violet-100', 'bg-pink-100', 'bg-teal-100', 'bg-orange-100', 'bg-indigo-100'];
+
+    const MAPEL_THEMES = {
+      "PENDIDIKAN AGAMA ISLAM": { bg: "#22c55e", light: "#f0fdf4", text: "#ffffff", textDark: "#14532d" },
+      "KEMUHAMMADIYAHAN": { bg: "#06b6d4", light: "#ecfeff", text: "#ffffff", textDark: "#164e63" },
+      "PENDIDIKAN PANCASILA": { bg: "#3b82f6", light: "#eff6ff", text: "#ffffff", textDark: "#1e3a8a" },
+      "BAHASA INDONESIA": { bg: "#ef4444", light: "#fef2f2", text: "#ffffff", textDark: "#7f1d1d" },
+      "ILMU PENGETAHUAN ALAM DAN SOSIAL": { bg: "#eab308", light: "#fefce8", text: "#ffffff", textDark: "#713f12" },
+      "MATEMATIKA": { bg: "#a855f7", light: "#faf5ff", text: "#ffffff", textDark: "#581c87" },
+      "PENDIDIKAN JASMANI, OLAHRAGA DAN KESEHATAN": { bg: "#84cc16", light: "#f7fee7", text: "#ffffff", textDark: "#3f6212" },
+      "BAHASA INGGRIS": { bg: "#6366f1", light: "#eef2ff", text: "#ffffff", textDark: "#312e81" },
+      "KESENIAN": { bg: "#ec4899", light: "#fdf2f8", text: "#ffffff", textDark: "#831843" },
+      "KODING": { bg: "#64748b", light: "#f8fafc", text: "#ffffff", textDark: "#0f172a" },
+      "BAHASA JAWA": { bg: "#f97316", light: "#fff7ed", text: "#ffffff", textDark: "#7c2d12" },
+      "BAHASA ARAB": { bg: "#14b8a6", light: "#f0fdfa", text: "#ffffff", textDark: "#134e4a" },
+      "IBADAH (WUDHU, TAYAMUM, SHALAT)": { bg: "#475569", light: "#f8fafc", text: "#ffffff", textDark: "#0f172a" },
+      "TAHFIDZ": { bg: "#0ea5e9", light: "#f0f9ff", text: "#ffffff", textDark: "#0c4a6e" },
+      "IQRA'": { bg: "#ea580c", light: "#fff7ed", text: "#ffffff", textDark: "#7c2d12" }
+    };
+
+    const DEFAULT_SCHEMAS = {
+      "NORMAL": { 
+        type: "normal", 
+        headers: ['UH1', 'UH2', 'UH3', 'UH4', 'UH5', 'UH6', 'UH7', 'STS', 'SAS'],
+        sts_sas: 'STS', sas_sas: 'SAS', sts_sat: 'STS', sas_sat: 'SAT' 
+      },
+      "IBADAH (WUDHU, TAYAMUM, SHALAT)": {
+        type: "special", categories: [
+          { name: "Wudhu", color: "#86efac", items: ["Niat", "Cuci Tangan", "Kumur", "Hidung", "Muka", "Tangan Siku", "Kepala Telinga", "Kaki", "Tertib", "Doa"] },
+          { name: "Tayamum", color: "#67e8f9", items: ["Niat", "Letak Tangan", "Tiup", "Usap Muka", "Usap Tangan", "Tertib"] },
+          { name: "Shalat", color: "#c4b5fd", items: ["Takbiratul Ihram", "Bersedekap", "Bacaan Do'a Iftitah", "Bacaan Surat Al-Fatihah", "Gerakan Ruku'", "Do'a Ruku'", "Gerakan I'tidal", "Do'a I'tidal", "Gerakan Sujud", "Do'a Sujud", "Gerakan Duduk Diantara Dua Sujud", "Do'a Diantara Dua Sujud", "Gerakan Duduk Tahiyat Akhir", "Bacaan Attahiyat & Shalawat", "Salam"] }
+        ]
+      },
+      "TAHFIDZ": { type: "special", categories: [{ name: "Tahfidz", color: "#38bdf8", items: ["Kelancaran", "Tajwid", "Makharijul Huruf", "S-1", "S-2", "S-3", "S-4", "S-5", "S-6", "S-7"] }] },
+      "IQRA'": { type: "special", categories: [{ name: "Iqra'", color: "#fdba74", items: ["Ta'awudz & Basmalah", "Kesepatan Membaca", "Kelancaran Membaca", "Suara", "Hal-1", "Hal-2", "Hal-3", "Hal-4", "Hal-5", "Hal-6"] }] }
+    };
+
+    const getMapelSchema = (mapelName, schemasObj, isSAS = true) => {
+      if (mapelName === 'WALI KELAS') return { type: 'wali', keys: [] }; 
+      const special = schemasObj[mapelName.toUpperCase().trim()];
+      if (!special) {
+         const normKeys = schemasObj["NORMAL"].headers || ['UH1', 'UH2', 'UH3', 'UH4', 'UH5', 'UH6', 'UH7', 'STS', 'SAS'];
+         const stsLabel = isSAS ? (schemasObj["NORMAL"].sts_sas || normKeys[7] || 'STS') : (schemasObj["NORMAL"].sts_sat || 'STS');
+         const sasLabel = isSAS ? (schemasObj["NORMAL"].sas_sas || normKeys[8] || 'SAS') : (schemasObj["NORMAL"].sas_sat || 'SAT');
+         
+         const displayHeaders = [...normKeys];
+         displayHeaders[7] = stsLabel;
+         displayHeaders[8] = sasLabel;
+         
+         return { type: 'normal', keys: normKeys, headers: displayHeaders };
+      }
+      
+      const keys = ['penguji'];
+      special.categories.forEach((cat, cIdx) => {
+        cat.items.forEach((item, iIdx) => {
+          keys.push(`${cIdx}_${iIdx}_UH`); keys.push(`${cIdx}_${iIdx}_STS`); keys.push(`${cIdx}_${iIdx}_SAT`);
+        });
+      });
+      return { type: 'special', keys, schema: special };
+    };
+
+    const getAdminPassword = (masterData) => {
+      try { if (masterData?.students?.["__ADMIN__"]) return masterData.students["__ADMIN__"][0].password; } catch(e) {}
+      return "admin123"; 
+    };
+
+    const DEFAULT_MASTER_DATA = { teachers: [], students: {}, gradesSummary: {}, gradesData: {} };
+
+    const AVATAR_COLORS = ['bg-indigo-200 border-indigo-400 text-indigo-900', 'bg-emerald-200 border-emerald-400 text-emerald-900', 'bg-amber-200 border-amber-400 text-amber-900', 'bg-fuchsia-200 border-fuchsia-400 text-fuchsia-900', 'bg-sky-200 border-sky-400 text-sky-900', 'bg-rose-200 border-rose-400 text-rose-900'];
+    
+    const SUCCESS_LOGIN_MSGS = [{ emoji: '🥳✨', title: 'CIE MASUK!', desc: 'Halo orang rajin! Yuk gas isi nilainya~ ❤️' }];
+    const ERROR_LOGIN_MSGS = [{ emoji: '🫣☕', title: 'TYPO YAAA?', desc: 'Passwordnya salah bestie! Ngopi dulu gih~ 🤪' }];
+    const SWITCH_CLASS_MSGS = [{ emoji: '🏃‍♂️💨', title: 'MAU KABUR?', desc: 'Udah di-Kirim belum nilainya? Ntar nangis lho kalo ilang~ 🥺' }];
+    
+    function IconLock({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>;}
+    function IconUser({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>;}
+    function IconLogOut({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>;}
+    function IconBookOpen({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>;}
+    function IconGraduationCap({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>;}
+    function IconSettings({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 1 0 5.66 5.66"></path></svg>;}
+    function IconCheckCircle({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;}
+    function IconAlertCircle({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>;}
+    function IconFileText({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;}
+    function IconUsers({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>;}
+    function IconActivity({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>;}
+    function IconDownload({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;}
+    function IconUploadCloud({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path><polyline points="16 16 12 12 8 16"></polyline></svg>;}
+    function IconRefresh({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>;}
+    function IconSend({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>;}
+    function IconEdit({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>;}
+    function IconTrash({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;}
+    function IconPlus({className}){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;}
+
+    function applyAdminExcelStyle(ws) {
+       const range = XLSX.utils.decode_range(ws['!ref']);
+       for(let R = range.s.r; R <= range.e.r; ++R) {
+          for(let C = range.s.c; C <= range.e.c; ++C) {
+             const cellRef = XLSX.utils.encode_cell({c:C, r:R});
+             if(!ws[cellRef]) continue;
+             const cell = ws[cellRef];
+             if (R === 0) {
+                 cell.s = { fill: { fgColor: { rgb: "1E3A8A" } }, font: { bold: true, color: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: {style:"thin", color:{rgb:"94A3B8"}}, bottom: {style:"thin", color:{rgb:"94A3B8"}}, left: {style:"thin", color:{rgb:"94A3B8"}}, right: {style:"thin", color:{rgb:"94A3B8"}} } };
+             } else {
+                 cell.s = { fill: { fgColor: { rgb: R % 2 === 0 ? "F8FAFC" : "FFFFFF" } }, alignment: { horizontal: "left", vertical: "center" }, border: { top: {style:"thin", color:{rgb:"E2E8F0"}}, bottom: {style:"thin", color:{rgb:"E2E8F0"}}, left: {style:"thin", color:{rgb:"E2E8F0"}}, right: {style:"thin", color:{rgb:"E2E8F0"}} } };
+             }
+          }
+       }
+       ws['!cols'] = Array(range.e.c + 1).fill({wch: 25});
+       const rows = [];
+       for(let R = range.s.r; R <= range.e.r; ++R) rows.push({hpx: 25});
+       ws['!rows'] = rows;
+    }
+
+    function FunnyDeletePopup({ show, targetName, type, onConfirm, onCancel }) {
+      if (!show) return null;
+      let desc = `Beneran mau hapus ${targetName}? Ntar nyesel lho!`;
+      if (type === 'teacher') desc = `Beneran mau pecat ${targetName}? Ntar siapa yang ngajar cobaaa? 😭`;
+      if (type === 'student') desc = `Tega banget ngusir ${targetName}... Padahal dia anak baik lho 🥺`;
+      if (type === 'class') desc = `Yakin hapus Kelas ${targetName}? Hilang semua kenangan kita ntar... 💔`;
+      if (type === 'mapel') desc = `Kalo ${targetName} dihapus, murid-murid mau belajar apa? Tiktokan? 🤪`;
+
+      return (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 transition-opacity animate-in fade-in">
+          <div className="relative w-full max-w-xs rounded-3xl p-5 text-center shadow-2xl bg-rose-50 border border-rose-200 transform hover:scale-[1.03] transition-all">
+            <div className="text-4xl mb-2 animate-bounce">😭💔</div>
+            <h2 className="text-base font-black mb-1 tracking-tight text-rose-950">YAKIN MAU HAPUS?</h2>
+            <p className="text-[11px] mb-4 font-semibold text-rose-800 opacity-90">{desc}</p>
+            <div className="flex gap-2">
+              <button onClick={onCancel} className="flex-1 py-2 rounded-xl bg-white border border-rose-200 hover:bg-rose-100 text-rose-700 font-bold text-[11px] transition-all shadow-sm">Gak Jadi 🥺</button>
+              <button onClick={onConfirm} className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] transition-all shadow-sm">Iya, Hapus! 💥</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function FunnyKocakPopup({ show, message, onClose, isSAS = true }) {
+      if (!show) return null;
+      const bg = isSAS ? 'bg-sky-50 border-sky-300' : 'bg-orange-50 border-orange-300';
+      const textTitle = isSAS ? 'text-sky-950' : 'text-orange-950';
+      const textDesc = isSAS ? 'text-sky-800' : 'text-orange-800';
+      const btn = isSAS ? 'bg-sky-600 hover:bg-sky-700' : 'bg-orange-600 hover:bg-orange-700';
+
+      return (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className={`w-full max-w-xs rounded-[28px] p-6 text-center shadow-2xl border transform hover:scale-[1.03] transition-all ${bg}`}>
+            <div className="text-5xl mb-3 animate-bounce">🤪💸🎒</div>
+            <h2 className={`text-base font-black mb-2 uppercase ${textTitle}`}>ASTAGA!</h2>
+            <p className={`text-[11px] mb-4 font-semibold opacity-95 leading-relaxed ${textDesc}`}>{message}</p>
+            <button onClick={onClose} className={`w-full py-2.5 rounded-xl text-white font-extrabold text-xs shadow-md active:scale-95 transition-transform ${btn}`}>Oke Siap Bos! 🫡</button>
+          </div>
+        </div>
+      );
+    }
+
+    function FunnyPopup({ show, type, msgIndex, onClose }) {
+      if (!show) return null;
+      const msg = type === 'success' ? SUCCESS_LOGIN_MSGS[msgIndex % SUCCESS_LOGIN_MSGS.length] : ERROR_LOGIN_MSGS[msgIndex % ERROR_LOGIN_MSGS.length];
+      const bg = type === 'success' ? 'bg-emerald-50 border-emerald-300' : 'bg-rose-50 border-rose-300';
+      const text = type === 'success' ? 'text-emerald-900' : 'text-rose-900';
+      const btn = type === 'success' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700';
+
+      return (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className={`w-full max-w-xs rounded-3xl p-5 text-center shadow-2xl border transform hover:scale-[1.03] active:scale-95 transition-all ${bg}`}>
+            <div className="text-4xl mb-2 animate-pulse">{msg.emoji}</div>
+            <h2 className={`text-base font-black mb-1 ${text}`}>{msg.title}</h2>
+            <p className={`text-[11px] mb-4 font-semibold ${text} opacity-90`}>{msg.desc}</p>
+            <button onClick={onClose} className={`w-full py-2 rounded-xl text-white font-bold text-[11px] shadow-sm active:scale-95 transition-transform ${btn}`}>Oke Siap Bos!</button>
+          </div>
+        </div>
+      );
+    }
+
+    function SwitchPopup({ show, msgIndex, onConfirm, onCancel, targetAssign, isSAS = true }) {
+      if (!show || !targetAssign) return null;
+      const msg = SWITCH_CLASS_MSGS[msgIndex % SWITCH_CLASS_MSGS.length];
+      const bg = isSAS ? 'bg-sky-50 border-sky-200' : 'bg-orange-50 border-orange-200';
+      const textTitle = isSAS ? 'text-sky-950' : 'text-orange-950';
+      const textDesc = isSAS ? 'text-sky-800' : 'text-orange-800';
+      const btnCancel = isSAS ? 'text-sky-700 border-sky-200 hover:bg-sky-100' : 'text-orange-700 border-orange-200 hover:bg-orange-100';
+      const btnConfirm = isSAS ? 'bg-sky-600 hover:bg-sky-700' : 'bg-orange-600 hover:bg-orange-700';
+
+      return (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className={`w-full max-w-sm rounded-3xl p-5 text-center shadow-2xl border transform transition-all hover:scale-[1.03] active:scale-95 ${bg}`}>
+            <div className="text-4xl mb-2 animate-bounce">{msg.emoji}</div>
+            <h2 className={`text-base font-black mb-1 tracking-tight ${textTitle}`}>{msg.title}</h2>
+            <p className={`text-[11px] mb-4 font-semibold opacity-90 leading-relaxed ${textDesc}`}>{msg.desc}</p>
+            <div className="flex gap-2">
+              <button onClick={onCancel} className={`flex-1 py-2 rounded-xl bg-white border font-bold text-[11px] shadow-sm active:scale-95 transition-transform ${btnCancel}`}>Bentar, Cek Dulu!</button>
+              <button onClick={onConfirm} className={`flex-1 py-2 rounded-xl text-white font-bold text-[11px] shadow-sm active:scale-95 transition-transform ${btnConfirm}`}>Aman, Pindah! 🚀</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function UpdatePopup({ show, onClose }) {
+       if (!show) return null;
+       return (
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in zoom-in duration-300">
+             <div className="w-full max-w-md rounded-3xl bg-white border-4 border-indigo-500 shadow-2xl p-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-100 rounded-bl-[100px] -z-10 opacity-50"></div>
+                <div className="absolute bottom-0 left-0 w-24 h-24 bg-fuchsia-100 rounded-tr-[80px] -z-10 opacity-50"></div>
+                
+                <div className="text-5xl text-center mb-2 animate-bounce">🎉</div>
+                <h2 className="text-base font-black text-center text-indigo-900 mb-1">YAY! UPDATE BARU ASTAGA</h2>
+                <div className="text-center mb-4"><span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full text-[10px] font-bold tracking-widest uppercase">Versi {APP_VERSION}</span></div>
+                
+                <div className="bg-indigo-50/80 p-4 rounded-xl mb-5 shadow-inner border border-indigo-100 max-h-48 overflow-y-auto">
+                   <h3 className="text-xs font-black text-indigo-800 mb-2">Apa Saja yang Diperbarui?</h3>
+                   <ul className="space-y-2">
+                      {APP_CHANGELOG.map((log, i) => (
+                         <li key={i} className="flex gap-2 text-[11px] font-bold text-slate-700 leading-snug">
+                            <IconCheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" /> {log}
+                         </li>
+                      ))}
+                   </ul>
+                </div>
+                
+                <button onClick={onClose} className="w-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white font-black py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase tracking-widest text-[11px]">Gaspol Bosku! 🚀</button>
+             </div>
+          </div>
+       );
+    }
+
+    function InstallPromptPopup({ show, onInstall }) {
+       const [isInstalling, setIsInstalling] = useState(false);
+       if (!show) return null;
+
+       const handleInstallClick = () => {
+         setIsInstalling(true);
+         onInstall();
+         setTimeout(() => setIsInstalling(false), 3000);
+       };
+
+       return (
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4 animate-in zoom-in duration-300">
+             <div className="w-full max-w-[320px] bg-white rounded-[32px] p-8 text-center shadow-2xl relative border-4 border-indigo-50">
+                <div className="text-6xl mb-4 animate-bounce drop-shadow-md">😎</div>
+                <h2 className="text-2xl font-black text-indigo-600 mb-3 tracking-tight">Pasang ASTAGA!</h2>
+                <p className="text-sm font-bold text-slate-600 mb-8 leading-relaxed px-2">
+                    Aplikasi ini harus dipasang dulu ke layar HP kamu biar super ngebut dan tanpa gangguan browser!
+                </p>
+                <button 
+                    onClick={handleInstallClick} 
+                    disabled={isInstalling}
+                    className="w-full bg-gradient-to-r from-indigo-500 to-blue-500 hover:from-indigo-600 hover:to-blue-600 text-white font-black py-4 rounded-2xl shadow-lg hover:shadow-xl active:scale-95 transition-all uppercase tracking-widest text-sm disabled:opacity-50"
+                >
+                    {isInstalling ? 'MEMPROSES... ⏳' : 'INSTALL SEKARANG ✨'}
+                </button>
+             </div>
+          </div>
+       );
+    }
+
+    function App() {
+      const [masterData, setMasterData] = useState(() => {
+          try {
+             const cached = localStorage.getItem('astaga_master_cache');
+             if (cached) return JSON.parse(cached);
+          } catch(e){}
+          return DEFAULT_MASTER_DATA;
+      });
+      const [currentUser, setCurrentUser] = useState(null);
+      const [activeAssignment, setActiveAssignment] = useState(null);
+      const [popup, setPopup] = useState({ show: false, type: 'success', index: 0 });
+      const [kocakPopup, setKocakPopup] = useState({ show: false, message: '', isSAS: true });
+      const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+      const [isFetchingData, setIsFetchingData] = useState(false);
+      const [showInstallPopup, setShowInstallPopup] = useState(false);
+      const [showUpdatePopup, setShowUpdatePopup] = useState(false);
+
+      useEffect(() => {
+         const isIframe = window.self !== window.top;
+         const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone || document.referrer.includes('android-app://');
+         
+         if (isStandalone) {
+             localStorage.setItem('astaga_installed', 'true');
+             setShowInstallPopup(false);
+         }
+
+         if (!isIframe && !isStandalone && localStorage.getItem('astaga_installed') !== 'true') {
+            setShowInstallPopup(true); 
+         }
+
+         window.addEventListener('appinstalled', () => {
+            localStorage.setItem('astaga_installed', 'true');
+            setShowInstallPopup(false);
+            showToast("Mantap! Aplikasi sudah nempel di HP! 🎉", "success");
+         });
+
+         if (isStandalone || localStorage.getItem('astaga_installed') === 'true') {
+             const savedVer = localStorage.getItem('astaga_version');
+             if (savedVer !== APP_VERSION) {
+                setTimeout(() => setShowUpdatePopup(true), 1000);
+                localStorage.setItem('astaga_version', APP_VERSION);
+             }
+         }
+      }, []);
+
+      const executeInstall = async () => {
+         const promptEvent = window.deferredPWA;
+         if (promptEvent) {
+            promptEvent.prompt();
+            const { outcome } = await promptEvent.userChoice;
+            if (outcome === 'accepted') {
+                showToast("Berhasil pasang aplikasi! 🎉", "success");
+                localStorage.setItem('astaga_installed', 'true');
+                setShowInstallPopup(false);
+            } else {
+                showToast("Dih kok dibatalin? Tekan lagi buruan! 😢", "error");
+            }
+            window.deferredPWA = null;
+         } else {
+             showToast("Sistem sedang mengunduh aset instalasi... Klik sekali lagi! 🚀", "success");
+         }
+      };
+
+      const fetchCloudMasterData = async (silent = false) => {
+        setIsFetchingData(true);
+        if (!silent) showToast("Membidik data dari server GAS... 📡", "success");
+        try {
+          const response = await fetch(SCRIPT_URL);
+          const data = await response.json();
+          setMasterData(data);
+          localStorage.setItem('astaga_master_cache', JSON.stringify(data));
+          if (!silent) showToast("Data terbaru berhasil ditarik! 🚀", "success");
+        } catch (err) {
+          if (!silent) showToast("Gagal menarik data. Server sibuk.", "error");
+        } finally {
+          setIsFetchingData(false);
+        }
+      };
+
+      useEffect(() => { fetchCloudMasterData(masterData.teachers && masterData.teachers.length > 0); }, []);
+
+      const showToast = (message, type = 'success') => {
+        setToast({ show: true, message, type });
+        setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000);
+      };
+
+      const currentSchemas = useMemo(() => {
+         if (masterData.students?.["__SCHEMA__"]) { try { return JSON.parse(masterData.students["__SCHEMA__"][0].name); } catch(e){} }
+         return DEFAULT_SCHEMAS;
+      }, [masterData.students]);
+
+      return (
+        <div className="min-h-screen max-h-screen h-screen bg-slate-50 flex flex-col overflow-hidden text-xs">
+          {!currentUser ? (
+            <LoginScreen masterData={masterData} isFetchingData={isFetchingData} onLogin={(user, assignment) => { setCurrentUser(user); setActiveAssignment(assignment); if(user !== 'ADMIN') setPopup({ show: true, type: 'success', index: Math.floor(Math.random() * 10) }); }} onLoginFail={() => setPopup({ show: true, type: 'error', index: Math.floor(Math.random() * 10) })} />
+          ) : currentUser === 'ADMIN' ? (
+            <AdminDashboard masterData={masterData} setMasterData={setMasterData} schemas={currentSchemas} onLogout={() => setCurrentUser(null)} showToast={showToast} toast={toast} onRefreshData={() => fetchCloudMasterData(false)} isFetchingData={isFetchingData} />
+          ) : (
+            <Dashboard user={currentUser} activeAssignment={activeAssignment} masterData={masterData} schemas={currentSchemas} onLogout={() => setCurrentUser(null)} showToast={showToast} toast={toast} setActiveAssignment={setActiveAssignment} triggerKocakPopup={(msg, isSAS) => setKocakPopup({show: true, message: msg, isSAS})} isFetchingData={isFetchingData} onForceRefresh={() => fetchCloudMasterData(false)} setMasterData={setMasterData} />
+          )}
+          <FunnyPopup show={popup.show} type={popup.type} msgIndex={popup.index} onClose={() => setPopup({ ...popup, show: false })} />
+          <FunnyKocakPopup show={kocakPopup.show} message={kocakPopup.message} isSAS={kocakPopup.isSAS} onClose={() => setKocakPopup({ show: false, message: '', isSAS: true })} />
+          <UpdatePopup show={showUpdatePopup} onClose={() => setShowUpdatePopup(false)} />
+          <InstallPromptPopup show={showInstallPopup} onInstall={executeInstall} />
+          {toast.show && (
+            <div className="fixed bottom-4 right-4 z-[99999] animate-in slide-in-from-bottom-2">
+              <div className={`rounded-xl shadow-lg px-4 py-2.5 flex items-center space-x-2 text-white font-bold text-xs ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`}>
+                {toast.type === 'success' ? <IconCheckCircle className="w-4 h-4" /> : <IconAlertCircle className="w-4 h-4" />}<span>{toast.message}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function LoginScreen({ masterData, isFetchingData, onLogin, onLoginFail }) {
+      const [mode, setMode] = useState('guru'); 
+      const [selectedGuru, setSelectedGuru] = useState('');
+      const [selectedAssign, setSelectedAssign] = useState('');
+      const [password, setPassword] = useState('');
+      const [adminPass, setAdminPass] = useState('');
+
+      const sortedTeachersForLogin = useMemo(() => [...(masterData.teachers || [])].sort((a, b) => a.name.localeCompare(b.name)), [masterData.teachers]);
+      const guruObj = masterData.teachers?.find(t => t.name === selectedGuru);
+      
+      const isSyncing = masterData?.teachers?.length === 0 && isFetchingData;
+
+      const handleLogin = (e) => {
+        e.preventDefault();
+        if (mode === 'admin') {
+          if (adminPass === getAdminPassword(masterData)) onLogin('ADMIN', null); else onLoginFail();
+        } else {
+          if (guruObj && guruObj.password === password && selectedAssign) {
+            if (selectedAssign.startsWith('WALI|')) onLogin(guruObj, { type: 'WALI', classId: selectedAssign.split('|')[1], mapel: 'WALI KELAS' });
+            else { const [kelas, mapel] = selectedAssign.split('|'); onLogin(guruObj, { classId: kelas, mapel: mapel }); }
+          } else onLoginFail();
+        }
+      };
+
+      if (isSyncing) {
+          return (
+            <div className="min-h-screen bg-slate-100 flex items-center justify-center p-3 font-sans bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] w-full">
+              <div className="max-w-sm w-full bg-white rounded-[24px] shadow-2xl border border-slate-200 relative animate-in fade-in duration-500 hover:shadow-2xl transition-all">
+                <div className="p-10 flex flex-col items-center justify-center animate-in zoom-in duration-500">
+                    <div className="relative w-20 h-20 mb-6">
+                        <div className="absolute inset-0 border-4 border-slate-100 rounded-full shadow-inner"></div>
+                        <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-[spin_1s_linear_infinite] shadow-[0_0_15px_rgba(79,70,229,0.5)]"></div>
+                        <div className="absolute inset-0 flex items-center justify-center text-2xl animate-pulse">☁️</div>
+                    </div>
+                    <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-1.5">Inisialisasi Sistem</h2>
+                    <p className="text-[10px] text-slate-500 font-bold text-center leading-relaxed px-4">Mengunduh database dari server Google untuk pertama kalinya. Mohon tunggu sebentar...</p>
+                </div>
+              </div>
+            </div>
+          );
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-100 flex items-center justify-center p-3 font-sans bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] w-full">
+          <div className="max-w-sm w-full bg-white rounded-[24px] shadow-xl border border-slate-200 relative animate-in fade-in duration-300 hover:shadow-2xl transition-all">
+            <div className={`p-6 text-center transition-colors duration-500 ${mode === 'admin' ? 'bg-slate-900' : 'bg-indigo-600'}`}>
+              <div className="bg-white/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-md shadow-inner overflow-hidden relative">
+                <img src="icon.png" alt="Logo ASTAGA" onError={(e) => { e.target.onerror = null; e.target.style.display = 'none'; }} className="w-12 h-12 object-contain" />
+                <IconSettings className={`text-white w-7 h-7 animate-[spin_4s_linear_infinite] ${!document.querySelector('img[src="icon.png"]') ? 'block' : 'hidden'}`} />
+              </div>
+              <h1 className="text-2xl font-black text-white tracking-widest leading-none animate-pulse">ASTAGA</h1>
+              <p className="text-white/80 text-[10px] font-semibold uppercase tracking-wider mt-1">{mode === 'admin' ? 'Ruang Kendali Admin' : 'Asisten Sistem Terpadu Guru Al Kautsar'}</p>
+            </div>
+            <div className="p-6">
+              <form onSubmit={handleLogin} className="space-y-4">
+                {mode === 'guru' && (
+                  <React.Fragment>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">Pilih Nama Guru</label>
+                      <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
+                        <IconUser className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                        <select className="pl-9 w-full rounded-xl border border-slate-200 py-2.5 px-3 text-xs text-slate-800 font-bold bg-slate-50 focus:outline-none focus:border-indigo-500 cursor-pointer" value={selectedGuru} onChange={(e) => { setSelectedGuru(e.target.value); setSelectedAssign(''); }} required>
+                          <option value="">-- Klik untuk memilih --</option>
+                          {sortedTeachersForLogin.map((t, i) => <option key={i} value={t.name}>{t.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {guruObj && (
+                      <div className="animate-in fade-in slide-in-from-top-2">
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">Pilih Kelas & Mata Pelajaran</label>
+                        <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
+                          <IconBookOpen className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                          <select className="pl-9 w-full rounded-xl border border-slate-200 py-2.5 px-3 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 font-bold appearance-none cursor-pointer bg-slate-50 hover:bg-indigo-50 transition-colors" value={selectedAssign} onChange={(e) => setSelectedAssign(e.target.value)} required>
+                            <option value="">-- Pilih Kelas --</option>
+                            {guruObj.assignments.map((a, i) => {
+                              if (a.type === 'WALI') return <option key={`wali-${i}`} value={`WALI|${a.classId}`}>👑 WALI KELAS - {a.classId}</option>;
+                              return <option key={i} value={`${a.classId}|${a.mapel}`}>Kelas {a.classId} - {a.mapel}</option>;
+                            })}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
+                )}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">{mode==='admin' ? 'Akses Admin' : 'Password / PIN'}</label>
+                  <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
+                    <IconLock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                    <input type="password" placeholder="Masukkan password" value={mode==='admin'?adminPass:password} onChange={(e) => mode==='admin'?setAdminPass(e.target.value):setPassword(e.target.value)} className={`pl-9 w-full rounded-xl border-2 py-2.5 px-3 text-xs text-slate-800 font-bold bg-slate-50 focus:outline-none ${mode==='admin'?'border-slate-300 focus:border-slate-800':'border-slate-200 focus:border-indigo-500'}`} required />
+                  </div>
+                </div>
+                <button type="submit" className={`w-full text-white font-extrabold rounded-xl py-2.5 shadow-md mt-2 text-xs tracking-wide transition-all duration-300 ${mode==='admin'?'bg-slate-900 hover:bg-slate-800 hover:-translate-y-1':'bg-indigo-600 hover:bg-indigo-700 hover:-translate-y-1'}`}>
+                  {mode==='admin' ? 'BUKA PANEL ADMIN 🗝️' : 'GAS MASUK! 🚀'}
+                </button>
+              </form>
+            </div>
+            <div className="bg-slate-50 border-t border-slate-200 p-4 text-center">
+              <button onClick={() => { setMode(mode === 'guru' ? 'admin' : 'guru'); setPassword(''); setAdminPass(''); }} className="text-[11px] font-extrabold text-slate-400 hover:text-indigo-600 transition-colors uppercase tracking-wider">
+                {mode === 'guru' ? '🛠️ Masuk sebagai Admin?' : '👨‍🏫 Kembali ke Login Guru'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function AdminDashboard({ masterData, setMasterData, schemas, onLogout, showToast, toast, onRefreshData, isFetchingData }) {
+      const [activeTab, setActiveTab] = useState('overview'); 
+      const [selectedSemester, setSelectedSemester] = useState('SAS');
+      const [isSyncing, setIsSyncing] = useState(false);
+      const [expandedGuru, setExpandedGuru] = useState({});
+      const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+      const isSAS = selectedSemester === 'SAS';
+      const adminTheme = {
+          bg: isSAS ? 'bg-[#f8faff]' : 'bg-[#fffcf8]',
+          header: isSAS ? 'bg-indigo-900' : 'bg-rose-900',
+          iconBg: isSAS ? 'bg-indigo-600' : 'bg-rose-600',
+          badge: isSAS ? 'bg-indigo-700' : 'bg-rose-700',
+          tabActive: isSAS ? 'bg-indigo-500' : 'bg-rose-500',
+          textHighlight: isSAS ? 'text-indigo-700' : 'text-rose-700',
+          btnSync: isSAS ? 'bg-indigo-800 border-indigo-700 hover:bg-indigo-700' : 'bg-rose-800 border-rose-700 hover:bg-rose-700',
+          overviewBox: isSAS ? 'bg-indigo-100/50' : 'bg-rose-100/50',
+          border: isSAS ? 'border-indigo-100' : 'border-rose-100',
+      };
+
+      const totalGuru = masterData.teachers?.length || 0;
+      const totalSiswa = Object.values(masterData.students || {}).flat().length - ((masterData.students || {})["__MAPELS__"] ? masterData.students["__MAPELS__"].length : 0) - ((masterData.students || {})["__SCHEMA__"] ? 1 : 0) - ((masterData.students || {})["__ADMIN__"] ? 1 : 0);
+      const totalKelas = Object.keys(masterData.students || {}).filter(k => k !== "__MAPELS__" && k !== "__SCHEMA__" && k !== "__ADMIN__").length;
+      
+      const trackingData = useMemo(() => {
+        let totalCellsExpected = 0, totalCellsFilled = 0;
+        const semCode = selectedSemester === 'SAS' ? 'S' : 'T';
+        (masterData.teachers || []).forEach(t => {
+            const tName = String(t.name).toUpperCase().trim();
+            t.assignments.filter(a => a.type !== 'WALI').forEach(a => {
+                const cId = String(a.classId).toUpperCase().trim();
+                const mapel = String(a.mapel).toUpperCase().trim();
+                const prefix = `${cId}-${semCode}|${mapel}|`;
+                const exactKeyMatch = Object.keys(masterData.gradesSummary || {}).find(k => k.toUpperCase() === `${prefix}${tName}`);
+                const matchingKey = exactKeyMatch || Object.keys(masterData.gradesSummary || {}).find(k => k.toUpperCase().startsWith(prefix));
+                const sum = masterData.gradesSummary?.[matchingKey] || { uhCount: 0, uhTotal: 0 };
+                totalCellsExpected += sum.uhTotal || 0;
+                totalCellsFilled += sum.uhCount || 0;
+            });
+        });
+        const globalProgress = totalCellsExpected === 0 ? 0 : Math.round((totalCellsFilled / totalCellsExpected) * 100);
+        return { globalProgress };
+      }, [masterData, selectedSemester]);
+
+      const teachersProgress = useMemo(() => {
+        const semCode = selectedSemester === 'SAS' ? 'S' : 'T';
+        return (masterData.teachers || []).map(t => {
+            const tName = String(t.name).toUpperCase().trim();
+            const assignments = t.assignments.filter(a => a.type !== 'WALI').map(a => {
+                const cId = String(a.classId).toUpperCase().trim();
+                const mapel = String(a.mapel).toUpperCase().trim();
+                const prefix = `${cId}-${semCode}|${mapel}|`;
+                const exact = Object.keys(masterData.gradesSummary || {}).find(k => k.toUpperCase() === `${prefix}${tName}`);
+                const matchingKey = exact || Object.keys(masterData.gradesSummary || {}).find(k => k.toUpperCase().startsWith(prefix));
+                const sum = masterData.gradesSummary?.[matchingKey] || { uhCount: 0, uhTotal: 0 };
+                const expected = sum.uhTotal || 0;
+                const filled = sum.uhCount || 0;
+                return { mapel: a.mapel, classId: a.classId, progress: expected === 0 ? 0 : Math.round((filled / expected) * 100) };
+            });
+            let total = assignments.length;
+            let completed = 0;
+            assignments.forEach(a => { if (a.progress === 100) completed++; });
+            return { name: t.name, total, completed, assignments };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+      }, [masterData, selectedSemester]);
+
+      const downloadTemplateGuru = () => {
+        const header = ["No", "Nama Guru", "Password", "Wali Kelas", "Mapel 1", "Kelas Mapel 1 (Pisahkan dgn koma)", "Mapel 2", "Kelas Mapel 2", "Mapel 3", "Kelas Mapel 3", "Mapel 4", "Kelas Mapel 4", "Mapel 5", "Kelas Mapel 5"];
+        const ws = XLSX.utils.aoa_to_sheet([header, [1, "Pak Budi", "123", "", "MATEMATIKA", "10A, 10B", "", "", "", "", "", "", "", ""]]);
+        applyAdminExcelStyle(ws);
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "MasterGuru"); XLSX.writeFile(wb, "Template_Master_Guru.xlsx");
+        showToast("Template Master Guru Premium Berhasil Diunduh!", "success");
+      };
+
+      const downloadTemplateSiswa = () => {
+        const header = ["Kelas", "No Presensi", "Nama Siswa"];
+        const ws = XLSX.utils.aoa_to_sheet([header, ["10A", "1", "Agus Contoh"]]);
+        applyAdminExcelStyle(ws);
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "MasterSiswa"); XLSX.writeFile(wb, "Template_Master_Siswa.xlsx");
+        showToast("Template Master Siswa Premium Berhasil Diunduh!", "success");
+      };
+
+      const syncToCloud = async (action, payloadKey, payloadData, successMsg) => {
+        setIsSyncing(true);
+        try {
+          await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, [payloadKey]: payloadData }) });
+          showToast(successMsg, "success");
+        } catch (err) { showToast("Koneksi gagal, tidak tersimpan ke server.", "error"); } finally { setIsSyncing(false); }
+      };
+
+      const handleResetGrades = async () => {
+        setShowResetConfirm(false); setIsSyncing(true);
+        try {
+          await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: "resetGrades" }) });
+          showToast("Berhasil! Semua rekap nilai di-reset.", "success"); onRefreshData();
+        } catch (err) { showToast("Gagal reset. Cek koneksi!", "error"); } finally { setIsSyncing(false); }
+      };
+
+      // FITUR BARU: AUTO-CORRECTOR NAMA MAPEL DARI SINGKATAN
+      const standardizeMapel = (str) => {
+        const raw = str.toUpperCase().trim();
+        if (raw === 'PAI' || raw === 'AGAMA') return 'PENDIDIKAN AGAMA ISLAM';
+        if (raw === 'PKN' || raw === 'PPKN' || raw === 'PANCASILA') return 'PENDIDIKAN PANCASILA';
+        if (raw === 'B. INDO' || raw === 'B. INDONESIA' || raw === 'B INDONESIA' || raw === 'BINDO') return 'BAHASA INDONESIA';
+        if (raw === 'MTK' || raw === 'MAT') return 'MATEMATIKA';
+        if (raw === 'PJOK' || raw === 'PENJAS' || raw === 'OLAHRAGA') return 'PENDIDIKAN JASMANI, OLAHRAGA DAN KESEHATAN';
+        if (raw === 'B. INGGRIS' || raw === 'B INGGRIS' || raw === 'BING' || raw === 'ENGLISH') return 'BAHASA INGGRIS';
+        if (raw === 'SBO' || raw === 'SBDP' || raw === 'SENI' || raw === 'SENI BUDAYA') return 'KESENIAN';
+        if (raw === 'B. JAWA' || raw === 'B JAWA') return 'BAHASA JAWA';
+        if (raw === 'B. ARAB' || raw === 'B ARAB') return 'BAHASA ARAB';
+        if (raw === 'IBADAH' || raw === 'PRAKTEK IBADAH') return 'IBADAH (WUDHU, TAYAMUM, SHALAT)';
+        if (raw === 'IPAS' || raw === 'IPA' || raw === 'IPS') return 'ILMU PENGETAHUAN ALAM DAN SOSIAL';
+        return raw;
+      };
+
+      const handleUploadGuru = (e) => {
+        const file = e.target.files[0]; if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type: 'array'});
+            if (!workbook.SheetNames.length) { showToast("File Excel kosong!", "error"); return; }
+            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1, defval: ""});
+            const teachersMap = {};
+            rows.slice(1).forEach(parts => {
+              if(parts.length > 2 && parts[1]) {
+                const nama = parts[1].toString().trim(); const pass = parts[2] !== "" ? String(parts[2]).trim() : "123";
+                const wali = parts[3] ? String(parts[3]).trim().toUpperCase() : "";
+                if(nama) {
+                  if(!teachersMap[nama]) {
+                     const assigns = [];
+                     if (wali) assigns.push({ type: 'WALI', classId: wali, mapel: 'WALI KELAS' });
+                     teachersMap[nama] = { name: nama, password: pass, assignments: assigns };
+                  }
+                  for(let i = 0; i < 5; i++) {
+                    const mIdx = 4 + (i * 2); const kIdx = 5 + (i * 2);
+                    if (parts[mIdx] !== undefined && parts[kIdx] !== undefined) {
+                       // Menerapkan Auto-Corrector di sini
+                       const mName = standardizeMapel(parts[mIdx].toString().trim());
+                       const kArr = String(parts[kIdx]).split(',').map(k => k.trim()).filter(k => k);
+                       if (mName && kArr.length > 0) { kArr.forEach(k => { if(!teachersMap[nama].assignments.find(a => a.classId === k && a.mapel === mName)) teachersMap[nama].assignments.push({ classId: k, mapel: mName }); }); }
+                    }
+                  }
+                }
+              }
+            });
+            const newTeachers = Object.values(teachersMap).filter(t => t.assignments.length > 0);
+            if(newTeachers.length > 0) { setMasterData(p => ({ ...p, teachers: newTeachers })); syncToCloud("saveMasterGuru", "teachers", newTeachers, "Data Guru tersimpan ke Cloud!"); } 
+            else showToast(`Format Excel salah!`, 'error');
+          } catch(err) { showToast(`Gagal baca Excel Guru.`, 'error'); }
+        }; reader.readAsArrayBuffer(file); e.target.value = ''; 
+      };
+
+      const handleUploadSiswa = (e) => {
+        const file = e.target.files[0]; if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type: 'array'});
+            if (!workbook.SheetNames.length) { showToast("File Excel kosong!", "error"); return; }
+            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1, defval: ""});
+            const studentsMap = { ...masterData.students }; 
+            for (let k in studentsMap) { if (k !== "__MAPELS__" && k !== "__SCHEMA__" && k !== "__ADMIN__") delete studentsMap[k]; }
+            rows.slice(1).forEach((parts, idx) => {
+              if(parts.length >= 3 && parts[0]) {
+                const kelas = String(parts[0]).trim().toUpperCase(); const idSiswa = parts[1] !== "" ? String(parts[1]).trim() : String(idx + 1); const namaSiswa = parts[2].toString().trim();
+                if(kelas && namaSiswa) { if(!studentsMap[kelas]) studentsMap[kelas] = []; studentsMap[kelas].push({ id: idSiswa, name: namaSiswa }); }
+              }
+            });
+            if(Object.keys(studentsMap).length > 0) { setMasterData(p => ({ ...p, students: studentsMap })); syncToCloud("saveMasterSiswa", "students", studentsMap, "Data Siswa tersimpan ke Cloud!"); } 
+            else showToast(`Format Excel salah!`, 'error');
+          } catch(err) { showToast(`Gagal baca Excel Siswa.`, 'error'); }
+        }; reader.readAsArrayBuffer(file); e.target.value = ''; 
+      };
+
+      return (
+        <div className={`h-screen max-h-screen flex flex-col font-sans text-xs overflow-hidden transition-colors duration-500 ${adminTheme.bg}`}>
+          <FunnyDeletePopup show={showResetConfirm} targetName="Seluruh Rekap Nilai" type="class" onConfirm={handleResetGrades} onCancel={() => setShowResetConfirm(false)} />
+          <header className={`flex-none text-white shadow-xl h-12 flex items-center justify-between px-4 z-20 transition-colors duration-500 ${adminTheme.header}`}>
+            <div className="flex items-center space-x-2 hover:scale-[1.03] active:scale-95 transition-all cursor-pointer">
+              <div className={`${adminTheme.iconBg} p-1 rounded-lg`}><IconSettings className="w-4 h-4 text-white" /></div>
+              <h1 className="font-extrabold text-[13px] tracking-widest flex items-center gap-1.5">ASTAGA <span className={`${adminTheme.badge} px-1.5 py-0.5 rounded text-[8px]`}>ADMIN</span></h1>
+            </div>
+            <div className="flex space-x-1 border border-white/10 bg-black/20 rounded-lg p-0.5 shadow-inner">
+              <button onClick={() => setActiveTab('overview')} className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase transition-all hover:scale-[1.03] ${activeTab === 'overview' ? `${adminTheme.tabActive} shadow` : 'text-white/60 hover:text-white'}`}>Progres</button>
+              <button onClick={() => setActiveTab('database')} className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase transition-all hover:scale-[1.03] ${activeTab === 'database' ? `${adminTheme.tabActive} shadow` : 'text-white/60 hover:text-white'}`}>Database</button>
+              <button onClick={() => setActiveTab('settings')} className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase transition-all hover:scale-[1.03] ${activeTab === 'settings' ? `${adminTheme.tabActive} shadow` : 'text-white/60 hover:text-white'}`}>Setting</button>
+            </div>
+            <div className="flex items-center gap-3">
+               <button onClick={onRefreshData} disabled={isFetchingData} className={`${adminTheme.btnSync} text-slate-100 font-bold px-2.5 py-1 rounded shadow-inner flex items-center gap-1 text-[10px] active:scale-95 transition-all`}>
+                   {isFetchingData ? <IconRefresh className="w-3.5 h-3.5 animate-spin" /> : <IconRefresh className="w-3.5 h-3.5" />} Sync
+               </button>
+               <button onClick={onLogout} className="text-white/60 hover:text-rose-400 p-1.5 rounded-lg transition-all hover:scale-[1.03] hover:bg-black/20"><IconLogOut className="w-4 h-4" /></button>
+            </div>
+          </header>
+          <main className="flex-1 overflow-y-auto scrollbar-hide p-3 sm:p-4 pb-10 max-w-5xl mx-auto w-full">
+            {activeTab === 'overview' && (
+              <div className="space-y-4 animate-in fade-in">
+                <div className={`flex p-1 rounded-xl w-full max-w-sm mx-auto mb-4 shadow-inner transition-colors duration-500 ${isSAS ? 'bg-indigo-200/50' : 'bg-rose-200/50'}`}>
+                   <button onClick={() => setSelectedSemester('SAS')} className={`flex-1 py-2 text-[11px] font-black uppercase rounded-lg transition-all duration-300 ${isSAS ? 'bg-indigo-600 shadow-md text-white scale-105' : 'text-indigo-800 hover:bg-indigo-100/50'}`}>Semester 1 (SAS)</button>
+                   <button onClick={() => setSelectedSemester('SAT')} className={`flex-1 py-2 text-[11px] font-black uppercase rounded-lg transition-all duration-300 ${!isSAS ? 'bg-rose-600 shadow-md text-white scale-105' : 'text-rose-800 hover:bg-rose-100/50'}`}>Semester 2 (SAT)</button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                  <div className={`bg-gradient-to-br p-3 rounded-2xl shadow-sm flex items-center space-x-2.5 transition-colors ${isSAS ? 'from-sky-100 to-sky-50' : 'from-orange-100 to-orange-50'}`}><IconUsers className={`w-6 h-6 p-1 bg-white rounded-lg shadow-inner ${isSAS ? 'text-sky-600' : 'text-orange-600'}`} /><div><p className={`text-[9px] font-bold uppercase ${isSAS ? 'text-sky-700' : 'text-orange-700'}`}>Guru Aktif</p><h3 className="text-sm font-black text-slate-800">{totalGuru}</h3></div></div>
+                  <div className={`bg-gradient-to-br p-3 rounded-2xl shadow-sm flex items-center space-x-2.5 transition-colors ${isSAS ? 'from-emerald-100 to-emerald-50' : 'from-rose-100 to-rose-50'}`}><IconGraduationCap className={`w-6 h-6 p-1 bg-white rounded-lg shadow-inner ${isSAS ? 'text-emerald-600' : 'text-rose-600'}`} /><div><p className={`text-[9px] font-bold uppercase ${isSAS ? 'text-emerald-700' : 'text-rose-700'}`}>Siswa</p><h3 className="text-sm font-black text-slate-800">{totalSiswa}</h3></div></div>
+                  <div className={`bg-gradient-to-br p-3 rounded-2xl shadow-sm flex items-center space-x-2.5 transition-colors ${isSAS ? 'from-amber-100 to-amber-50' : 'from-fuchsia-100 to-fuchsia-50'}`}><IconBookOpen className={`w-6 h-6 p-1 bg-white rounded-lg shadow-inner ${isSAS ? 'text-amber-600' : 'text-fuchsia-600'}`} /><div><p className={`text-[9px] font-bold uppercase ${isSAS ? 'text-amber-700' : 'text-fuchsia-700'}`}>Kelas</p><h3 className="text-sm font-black text-slate-800">{totalKelas}</h3></div></div>
+                  <div className={`bg-gradient-to-br p-3 rounded-2xl shadow-sm flex items-center space-x-2.5 relative overflow-hidden transition-colors ${isSAS ? 'from-indigo-100 to-indigo-50' : 'from-rose-100 to-rose-50'}`}><IconActivity className={`w-6 h-6 p-1 bg-white rounded-lg shadow-inner z-10 ${isSAS ? 'text-indigo-600' : 'text-rose-600'}`} /><div className="z-10"><p className={`text-[9px] font-bold uppercase ${isSAS ? 'text-indigo-700' : 'text-rose-700'}`}>Global {isSAS ? '(SAS)' : '(SAT)'}</p><h3 className={`text-sm font-black ${isSAS ? 'text-indigo-800' : 'text-rose-800'}`}>{trackingData.globalProgress}%</h3></div><div className={`absolute bottom-0 left-0 h-1 transition-all duration-1000 ${isSAS ? 'bg-indigo-400' : 'bg-rose-400'}`} style={{width: `${trackingData.globalProgress}%`}}></div></div>
+                </div>
+                <div className="space-y-2">
+                  <div className="pb-1.5 flex justify-between items-center">
+                    <div><h2 className="text-xs font-black text-slate-800 uppercase">Progres Per Guru</h2></div>
+                  </div>
+                  {teachersProgress.map((g, idx) => {
+                    const pct = g.total === 0 ? 0 : Math.round((g.completed / g.total) * 100);
+                    const isExpanded = !!expandedGuru[g.name];
+                    return (
+                      <div key={idx} className={`rounded-xl border overflow-hidden shadow-sm hover:scale-[1.01] transition-all bg-white ${adminTheme.border}`}>
+                        <div onClick={() => setExpandedGuru(p => ({...p, [g.name]: !p[g.name]}))} className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-50/50">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-base shadow-sm ${AVATAR_COLORS[idx%AVATAR_COLORS.length]}`}>{g.name.charAt(0)}</div>
+                            <div><h3 className="font-extrabold text-slate-800 text-xs">{g.name}</h3><p className="text-[9px] text-slate-500 font-bold uppercase">Mengajar {g.assignments.length} Mapel ({selectedSemester})</p></div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right hidden sm:block"><span className="text-[9px] font-extrabold text-slate-400 block uppercase">Status</span><p className="text-[10px] font-black text-slate-700">{g.completed}/{g.total} Selesai</p></div>
+                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black border shadow-sm ${pct===100?'bg-emerald-50 text-emerald-800 border-emerald-300':pct>0?'bg-amber-50 text-amber-800 border-amber-300 animate-pulse':'bg-slate-50 text-slate-400'}`}>{pct}%</span>
+                          </div>
+                        </div>
+                        {isExpanded && (
+                          <div className="border-t border-slate-100 bg-slate-50/30 p-3">
+                            {g.assignments.length === 0 ? <p className="text-[10px] text-center text-slate-400">Belum ada tugas di semester ini.</p> : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                {g.assignments.map((a, i) => (
+                                  <div key={i} className={`bg-white p-2.5 rounded-lg border flex items-center justify-between shadow-sm hover:border-slate-300 transition-colors ${adminTheme.border}`}>
+                                      <div className="overflow-hidden pr-2">
+                                          <p className={`font-extrabold text-[10px] leading-tight truncate ${adminTheme.textHighlight}`} title={a.mapel}>{a.mapel}</p>
+                                          <span className={`inline-block mt-1 font-bold px-1.5 py-0.5 rounded text-[8px] ${isSAS ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-rose-50 text-rose-600 border border-rose-100'}`}>Kls {a.classId || '?'}</span>
+                                      </div>
+                                      <span className={`flex-shrink-0 px-2 py-1 rounded text-[9px] font-extrabold border ${a.progress===100?'bg-teal-100 text-teal-700 border-teal-200':a.progress>0?'bg-amber-100 text-amber-700 border-amber-200 animate-pulse':'bg-slate-50 text-slate-400 border-slate-200'}`}>{a.progress}% DONE</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {activeTab === 'database' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in">
+                <div className={`bg-gradient-to-br rounded-2xl shadow-sm border flex flex-col p-5 ${isSAS ? 'from-indigo-50/60 to-indigo-50/10 border-indigo-200' : 'from-rose-50/60 to-rose-50/10 border-rose-200'}`}>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-2"><IconUser className={`w-5 h-5 bg-white p-1 rounded-lg shadow-inner ${isSAS ? 'text-indigo-500' : 'text-rose-500'}`}/><h2 className="text-sm font-black text-slate-800">Master Guru</h2></div>
+                    <button onClick={downloadTemplateGuru} className={`bg-white border font-bold px-2 py-1 rounded text-[9px] ${isSAS ? 'text-indigo-600' : 'text-rose-600'}`}>Template</button>
+                  </div>
+                  <div className={`border-2 border-dashed rounded-xl p-4 text-center bg-white/80 cursor-pointer group hover:bg-white ${isSAS ? 'border-indigo-300' : 'border-rose-300'}`} onClick={e=>{if(e.target.tagName!=='INPUT') e.currentTarget.querySelector('input').click()}}>
+                    <IconFileText className={`w-7 h-7 mx-auto mb-1 ${isSAS ? 'text-indigo-400 group-hover:text-indigo-600' : 'text-rose-400 group-hover:text-rose-600'}`} />
+                    <span className={`text-[10px] font-extrabold ${isSAS ? 'text-slate-600 group-hover:text-indigo-800' : 'text-slate-600 group-hover:text-rose-800'}`}>Klik & Pilih Excel Guru</span>
+                    <input type="file" accept=".xls,.xlsx,.csv" className="hidden" onChange={handleUploadGuru} />
+                  </div>
+                </div>
+                <div className={`bg-gradient-to-br rounded-2xl shadow-sm border flex flex-col p-5 ${isSAS ? 'from-emerald-50/60 to-emerald-50/10 border-emerald-200' : 'from-orange-50/60 to-orange-50/10 border-orange-200'}`}>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-2"><IconGraduationCap className={`w-5 h-5 bg-white p-1 rounded-lg shadow-inner ${isSAS ? 'text-emerald-500' : 'text-orange-500'}`}/><h2 className="text-sm font-black text-slate-800">Master Siswa</h2></div>
+                    <button onClick={downloadTemplateSiswa} className={`bg-white border font-bold px-2 py-1 rounded text-[9px] ${isSAS ? 'text-emerald-600' : 'text-orange-600'}`}>Template</button>
+                  </div>
+                  <div className={`border-2 border-dashed rounded-xl p-4 text-center bg-white/80 cursor-pointer group hover:bg-white ${isSAS ? 'border-emerald-300' : 'border-orange-300'}`} onClick={e=>{if(e.target.tagName!=='INPUT') e.currentTarget.querySelector('input').click()}}>
+                    <IconFileText className={`w-7 h-7 mx-auto mb-1 ${isSAS ? 'text-emerald-400 group-hover:text-emerald-600' : 'text-orange-400 group-hover:text-orange-600'}`} />
+                    <span className={`text-[10px] font-extrabold ${isSAS ? 'text-slate-600 group-hover:text-emerald-800' : 'text-slate-600 group-hover:text-orange-800'}`}>Klik & Pilih Excel Siswa</span>
+                    <input type="file" accept=".xls,.xlsx,.csv" className="hidden" onChange={handleUploadSiswa} />
+                  </div>
+                </div>
+                <div className="bg-red-50 border border-red-300 rounded-2xl p-5 col-span-1 md:col-span-2 shadow-sm hover:scale-[1.01] transition-all">
+                  <div className="flex items-center gap-2 mb-2"><IconAlertCircle className="w-4 h-4 text-red-500 bg-white p-0.5 rounded shadow-inner" /><h2 className="text-sm font-black text-red-950">Zona Bahaya</h2></div>
+                  <p className="text-red-800 text-[10px] mb-3 font-bold">Hapus semua tab nilai di Google Sheets. Master guru/siswa aman.</p>
+                  <button onClick={()=>setShowResetConfirm(true)} className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-xl text-xs shadow-md active:scale-95 transition-all">Reset Semua Rekap Nilai Siswa</button>
+                </div>
+              </div>
+            )}
+            {activeTab === 'settings' && (<AdminSettingsTab masterData={masterData} setMasterData={setMasterData} schemas={schemas} syncGuru={syncToCloud} syncSiswa={syncToCloud} showToast={showToast} />)}
+          </main>
+        </div>
+      );
+    }
+
+    function AdminSettingsTab({ masterData, setMasterData, schemas, syncGuru, syncSiswa, showToast }) {
+      const [view, setView] = useState('rubrik'); 
+      const [newTeacherName, setNewTeacherName] = useState('');
+      const [newTeacherPass, setNewTeacherPass] = useState('123');
+      const [newTeacherWali, setNewTeacherWali] = useState('');
+      const [selClass, setSelClass] = useState('');
+      const [newClassName, setNewClassName] = useState('');
+      const [newMapelName, setNewMapelName] = useState('');
+      const [editingTeacherObj, setEditingTeacherObj] = useState(null);
+      const [editingTeacherName, setEditingTeacherName] = useState('');
+      const [editingTeacherPass, setEditingTeacherPass] = useState('');
+      const [editingTeacherWali, setEditingTeacherWali] = useState('');
+      const [editingStudentObj, setEditingStudentObj] = useState(null);
+      const [editStudentNumber, setEditStudentNumber] = useState('');
+      const [editStudentName, setEditStudentName] = useState('');
+      const [editingMapel, setEditingMapel] = useState(null);
+      const [editMapelName, setEditMapelName] = useState('');
+      const [deletePrompt, setDeletePrompt] = useState({ show: false, type: '', target: null });
+      const [selRubrikMapel, setSelRubrikMapel] = useState('NORMAL');
+      const [rubrikForm, setRubrikForm] = useState(JSON.parse(JSON.stringify(schemas)));
+      const [newAdminPass, setNewAdminPass] = useState('');
+      
+      useEffect(() => { setNewAdminPass(getAdminPassword(masterData)); }, [masterData]);
+
+      const mapelsList = useMemo(() => sortMapels(masterData.students["__MAPELS__"] || DEFAULT_MAPELS), [masterData.students]);
+      const sortedTeachers = useMemo(() => [...masterData.teachers].sort((a, b) => a.name.localeCompare(b.name)), [masterData.teachers]);
+      const sortedStudents = useMemo(() => {
+        if (!selClass || !masterData.students[selClass] || selClass === "__MAPELS__" || selClass === "__SCHEMA__" || selClass === "__ADMIN__") return [];
+        return [...masterData.students[selClass]].sort((a, b) => a.id.localeCompare(b.id, undefined, {numeric: true}));
+      }, [masterData.students, selClass]);
+
+      const getNorm = (key, defaultVal) => rubrikForm.NORMAL[key] !== undefined ? rubrikForm.NORMAL[key] : defaultVal;
+      const handleRubrikNormalChange = (idx, val) => { const newHeaders = [...rubrikForm.NORMAL.headers]; newHeaders[idx] = val; setRubrikForm({...rubrikForm, NORMAL: {...rubrikForm.NORMAL, headers: newHeaders}}); };
+      const handleRubrikFieldChange = (key, val) => { setRubrikForm({...rubrikForm, NORMAL: {...rubrikForm.NORMAL, [key]: val}}); };
+      const handleRubrikCatChange = (mType, cIdx, val) => { const newCats = [...rubrikForm[mType].categories]; newCats[cIdx].name = val; setRubrikForm({...rubrikForm, [mType]: {...rubrikForm[mType], categories: newCats}}); };
+      const handleRubrikItemsChange = (mType, cIdx, val) => { const newCats = [...rubrikForm[mType].categories]; newCats[cIdx].items = val.split(',').map(s => s.trim()); setRubrikForm({...rubrikForm, [mType]: {...rubrikForm[mType], categories: newCats}}); };
+
+      const saveRubrik = () => { const newData = {...masterData.students, "__SCHEMA__": [{id: "schema", name: JSON.stringify(rubrikForm)}]}; setMasterData(m => ({...m, students: newData})); syncSiswa("saveMasterSiswa", "students", newData, "Mantap! Rubrik berhasil diamankan permanen!"); };
+      const saveAdminPassword = () => { if(!newAdminPass.trim()) return; const newData = {...masterData.students, "__ADMIN__": [{id: "admin", password: newAdminPass.trim()}]}; setMasterData(m => ({...m, students: newData})); syncSiswa("saveMasterSiswa", "students", newData, "Sip! Password Admin baru udah aktif."); };
+      const saveTeacher = () => { const n = editingTeacherName.trim(), p = editingTeacherPass.trim(); if(!n || !p) return; const newData = masterData.teachers.map(t => { if(t.name === editingTeacherObj.name) { const otherAssigns = t.assignments.filter(a => a.type !== 'WALI'); if (editingTeacherWali.trim()) otherAssigns.unshift({ type: 'WALI', classId: editingTeacherWali.trim().toUpperCase(), mapel: 'WALI KELAS' }); return {...t, name:n, password:p, assignments: otherAssigns}; } return t; }); setMasterData(m => ({...m, teachers: newData})); syncGuru("saveMasterGuru", "teachers", newData, "Tersimpan bosku!"); setEditingTeacherObj(null); };
+      const saveStudent = () => { const i = editStudentNumber.trim(), n = editStudentName.trim(); if(!i || !n) return; const list = masterData.students[selClass].map(s => s.id === editingStudentObj.id ? {id:i, name:n} : s); const newData = {...masterData.students, [selClass]: list}; setMasterData(m => ({...m, students: newData})); syncSiswa("saveMasterSiswa", "students", newData, "Tersimpan bosku!"); setEditingStudentObj(null); };
+      const openEditStudentModal = (student) => { setEditingStudentObj(student); setEditStudentNumber(student.id); setEditStudentName(student.name); };
+      
+      const standardizeMapel = (str) => {
+        const raw = str.toUpperCase().trim();
+        if (raw === 'PAI' || raw === 'AGAMA') return 'PENDIDIKAN AGAMA ISLAM';
+        if (raw === 'PKN' || raw === 'PPKN' || raw === 'PANCASILA') return 'PENDIDIKAN PANCASILA';
+        if (raw === 'B. INDO' || raw === 'B. INDONESIA' || raw === 'B INDONESIA' || raw === 'BINDO') return 'BAHASA INDONESIA';
+        if (raw === 'MTK' || raw === 'MAT') return 'MATEMATIKA';
+        if (raw === 'PJOK' || raw === 'PENJAS' || raw === 'OLAHRAGA') return 'PENDIDIKAN JASMANI, OLAHRAGA DAN KESEHATAN';
+        if (raw === 'B. INGGRIS' || raw === 'B INGGRIS' || raw === 'BING' || raw === 'ENGLISH') return 'BAHASA INGGRIS';
+        if (raw === 'SBO' || raw === 'SBDP' || raw === 'SENI' || raw === 'SENI BUDAYA') return 'KESENIAN';
+        if (raw === 'B. JAWA' || raw === 'B JAWA') return 'BAHASA JAWA';
+        if (raw === 'B. ARAB' || raw === 'B ARAB') return 'BAHASA ARAB';
+        if (raw === 'IBADAH' || raw === 'PRAKTEK IBADAH') return 'IBADAH (WUDHU, TAYAMUM, SHALAT)';
+        if (raw === 'IPAS' || raw === 'IPA' || raw === 'IPS') return 'ILMU PENGETAHUAN ALAM DAN SOSIAL';
+        return raw;
+      };
+
+      const saveMapel = () => { const n = standardizeMapel(editMapelName.trim()); if(!n) return; const list = mapelsList.map(m => m === editingMapel ? n : m); const tList = masterData.teachers.map(t => ({...t, assignments: t.assignments.map(a => a.mapel===editingMapel?{...a, mapel:n}:a)})); const newData = {...masterData.students, "__MAPELS__": list}; setMasterData(m => ({...m, students: newData, teachers: tList})); syncSiswa("saveMasterSiswa", "students", newData, "Tersimpan bosku!"); setEditingMapel(null); };
+
+      const executeDelete = () => {
+        const type = deletePrompt.type, tar = deletePrompt.target;
+        if(type==='teacher') { const dt = masterData.teachers.filter(t => t.name !== tar); setMasterData(m => ({...m, teachers: dt})); syncGuru("saveMasterGuru", "teachers", dt, "Terhapus bersih."); } 
+        else if(type==='class') { const ds = {...masterData.students}; delete ds[tar]; setMasterData(m => ({...m, students: ds})); syncSiswa("saveMasterSiswa", "students", ds, "Kelas rata dengan tanah."); setSelClass(''); } 
+        else if(type==='student') { const ds = {...masterData.students, [selClass]: masterData.students[selClass].filter(s=>s.id!==tar)}; setMasterData(m => ({...m, students: ds})); syncSiswa("saveMasterSiswa", "students", ds, "Siswa ditendang dengan sukses."); } 
+        else if(type==='mapel') { const ds = {...masterData.students, "__MAPELS__": mapelsList.filter(m=>m!==tar)}; setMasterData(m => ({...m, students: ds})); syncSiswa("saveMasterSiswa", "students", ds, "Mapel hangus dari muka bumi."); }
+        setDeletePrompt({show:false});
+      };
+
+      const handleAddTeacher = (e) => { e.preventDefault(); const name = newTeacherName.trim(); const pass = newTeacherPass.trim(); if(!name || !pass) return; if(masterData.teachers.find(t => t.name === name)) { showToast("Suhu, Guru ini udah ada!", "error"); return; } const assigns = []; if (newTeacherWali.trim()) assigns.push({ type: 'WALI', classId: newTeacherWali.trim().toUpperCase(), mapel: 'WALI KELAS' }); const newData = [...masterData.teachers, { name, password: pass, assignments: assigns }]; setMasterData(p => ({...p, teachers: newData})); syncGuru("saveMasterGuru", "teachers", newData, `Halo Guru baru!`); setNewTeacherName(''); setNewTeacherPass('123'); setNewTeacherWali(''); };
+      const handleAddMapel = (e) => { e.preventDefault(); const mapel = standardizeMapel(newMapelName.trim()); if(!mapel) return; if(mapelsList.includes(mapel)) { showToast("Mapel udah ada bos!", "error"); return; } const newList = [...mapelsList, mapel].sort(); const newData = {...masterData.students, "__MAPELS__": newList}; setMasterData(m => ({...m, students: newData})); syncSiswa("saveMasterSiswa", "students", newData, "Mapel baru mendarat."); setNewMapelName(''); };
+      const handleAddClass = (e) => { e.preventDefault(); const c = newClassName.trim(); if(!c || masterData.students[c]) { showToast("Kelas kosong/udah ada tuh!", "error"); return; } const newStudents = { ...masterData.students, [c]: [] }; setMasterData(p => ({...p, students: newStudents})); syncSiswa("saveMasterSiswa", "students", newStudents, `Kelas resmi dibuka.`); setNewClassName(''); setSelClass(c); };
+      const handleAddStudent = (e) => { e.preventDefault(); const fd = new FormData(e.target); const id = fd.get('id').trim(); const name = fd.get('name').trim(); if(!id || !name || !selClass) return; const classList = [...(masterData.students[selClass] || [])]; if(classList.find(s => s.id === id)) { showToast("ID-nya kembar bos!", "error"); return; } classList.push({id, name}); const newStudents = { ...masterData.students, [selClass]: classList }; setMasterData(p => ({...p, students: newStudents})); syncSiswa("saveMasterSiswa", "students", newStudents, "Siswa ditambahkan."); e.target.reset(); };
+
+      return (
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in pb-4">
+          <FunnyDeletePopup show={deletePrompt.show} targetName={deletePrompt.target} type={deletePrompt.type} onConfirm={executeDelete} onCancel={() => setDeletePrompt({show:false})} />
+          {editingMapel && (<div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"><div className="w-full max-w-sm rounded-[28px] bg-white p-6 shadow-2xl"><h3 className="font-black text-slate-800 text-sm mb-2">Edit Nama Mapel</h3><p className="text-[9px] text-rose-600 mb-4 font-bold leading-tight">⚠️ PERINGATAN: Jika mengubah nama Mapel, pastikan Anda juga mengupdate MAPEL_CONFIG di script GAS agar sinkronisasi tidak rusak!</p><input type="text" value={editMapelName} onChange={e=>setEditMapelName(e.target.value)} className="w-full px-3 py-2.5 text-xs font-bold rounded-xl border bg-slate-50 mb-4" /><div className="flex gap-2"><button onClick={() => setEditingMapel(null)} className="flex-1 py-2.5 rounded-xl bg-slate-100 font-bold text-xs">Batal</button><button onClick={saveMapel} className="flex-1 py-2.5 rounded-xl bg-fuchsia-600 text-white font-bold text-xs">Simpan</button></div></div></div>)}
+          {editingTeacherObj && (<div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"><div className="w-full max-w-sm rounded-[28px] bg-white p-6 shadow-2xl"><h3 className="font-black text-slate-800 text-sm mb-4">Edit Profil Guru</h3><input type="text" value={editingTeacherName} onChange={e=>setEditingTeacherName(e.target.value)} className="w-full px-3 py-2 text-xs font-bold rounded-xl border mb-2" placeholder="Nama Guru"/><input type="text" value={editingTeacherPass} onChange={e=>setEditingTeacherPass(e.target.value)} className="w-full px-3 py-2 text-xs font-bold rounded-xl border mb-2" placeholder="Password"/><input type="text" value={editingTeacherWali} onChange={e=>setEditingTeacherWali(e.target.value)} className="w-full px-3 py-2 text-xs font-bold rounded-xl border mb-4" placeholder="Wali Kelas (Opsional, cth: 5A)"/><div className="flex gap-2"><button onClick={()=>setEditingTeacherObj(null)} className="flex-1 py-2 rounded-xl bg-slate-100 font-bold text-xs">Batal</button><button onClick={saveTeacher} className="flex-1 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs">Simpan</button></div></div></div>)}
+          {editingStudentObj && (<div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"><div className="w-full max-w-sm rounded-[28px] bg-white p-6 shadow-2xl"><h3 className="font-black text-slate-800 text-sm mb-4">Edit Profil Siswa</h3><input type="text" value={editStudentNumber} onChange={e=>setEditStudentNumber(e.target.value)} className="w-full px-3 py-2.5 text-xs font-bold rounded-xl border bg-slate-50 mb-2" /><input type="text" value={editStudentName} onChange={e=>setEditStudentName(e.target.value)} className="w-full px-3 py-2.5 text-xs font-bold rounded-xl border bg-slate-50 mb-4" /><div className="flex gap-2"><button onClick={() => setEditingStudentObj(null)} className="flex-1 py-2.5 rounded-xl bg-slate-100 font-bold text-xs">Batal</button><button onClick={saveStudent} className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs">Simpan</button></div></div></div>)}
+
+          <div className="flex flex-wrap justify-center sm:justify-start border-b border-slate-100 bg-slate-50 p-2 gap-2">
+            <button onClick={() => setView('rubrik')} className={`flex-auto sm:flex-none min-w-[90px] py-2.5 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 ${view === 'rubrik' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-amber-50/50'}`}>⚙️ Rubrik</button>
+            <button onClick={() => setView('guru')} className={`flex-auto sm:flex-none min-w-[90px] py-2.5 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 ${view === 'guru' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-indigo-50/50'}`}>👨‍🏫 Guru</button>
+            <button onClick={() => setView('mapel')} className={`flex-auto sm:flex-none min-w-[90px] py-2.5 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 ${view === 'mapel' ? 'bg-fuchsia-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-fuchsia-50/50'}`}>📚 Mapel</button>
+            <button onClick={() => setView('siswa')} className={`flex-auto sm:flex-none min-w-[90px] py-2.5 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 ${view === 'siswa' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-emerald-50/50'}`}>🎓 Siswa</button>
+            <button onClick={() => setView('admin')} className={`flex-auto sm:flex-none min-w-[90px] py-2.5 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 ${view === 'admin' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'}`}>🗝️ Admin</button>
+          </div>
+
+          <div className="p-4 sm:p-6 overflow-y-auto max-h-[65vh]">
+            {view === 'admin' && (
+               <div className="space-y-4 animate-in fade-in">
+                  <div className="bg-slate-100 p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                     <div><h3 className="font-black text-slate-800 text-sm flex items-center gap-1.5"><IconLock className="w-4 h-4"/> Pengaturan Akun Admin</h3><p className="text-[10px] text-slate-600 font-bold mt-1">Ubah password rahasia untuk masuk ke Dashboard Admin (Default: admin123).</p></div>
+                  </div>
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm max-w-sm">
+                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Password Admin Baru</label>
+                      <div className="flex gap-2"><input type="password" value={newAdminPass} onChange={e=>setNewAdminPass(e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black bg-slate-50 focus:border-slate-400 focus:bg-white transition-colors" /><button onClick={saveAdminPassword} className="bg-slate-800 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-md active:scale-95 hover:bg-slate-700 transition-all">Simpan</button></div>
+                  </div>
+               </div>
+            )}
+            
+            {view === 'rubrik' && (
+               <div className="space-y-4 animate-in fade-in">
+                  <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                     <div><h3 className="font-black text-amber-900 text-sm flex items-center gap-1.5"><IconSettings className="w-4 h-4"/> Pengaturan Rubrik & Kolom Penilaian</h3></div>
+                     <button onClick={saveRubrik} className="w-full sm:w-auto bg-amber-600 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-md active:scale-95 hover:bg-amber-700 transition-all">Simpan Permanen</button>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mb-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">
+                     {["NORMAL", "IBADAH (WUDHU, TAYAMUM, SHALAT)", "TAHFIDZ", "IQRA'"].map(k => (<button key={k} onClick={() => setSelRubrikMapel(k)} className={`flex-1 min-w-[100px] px-3 py-2.5 rounded-xl text-[10px] font-black transition-all ${selRubrikMapel === k ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-50 border text-slate-600 hover:bg-amber-50'}`}>{k}</button>))}
+                  </div>
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                     {selRubrikMapel === 'NORMAL' && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                           {rubrikForm.NORMAL.headers.slice(0, 7).map((h, i) => (<div key={i}><label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Formatif Ke-{i+1}</label><input value={h} onChange={(e) => handleRubrikNormalChange(i, e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black bg-slate-50 focus:border-amber-400 focus:bg-white transition-colors" /></div>))}
+                           <div><label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Tengah Sem. 1 (SAS)</label><input value={getNorm('sts_sas', rubrikForm.NORMAL.headers[7] || 'STS')} onChange={(e) => handleRubrikFieldChange('sts_sas', e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black bg-slate-50 focus:border-amber-400 focus:bg-white transition-colors" /></div>
+                           <div><label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Akhir Sem. 1 (SAS)</label><input value={getNorm('sas_sas', rubrikForm.NORMAL.headers[8] || 'SAS')} onChange={(e) => handleRubrikFieldChange('sas_sas', e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black bg-slate-50 focus:border-amber-400 focus:bg-white transition-colors" /></div>
+                           <div><label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Tengah Sem. 2 (SAT)</label><input value={getNorm('sts_sat', 'STS')} onChange={(e) => handleRubrikFieldChange('sts_sat', e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black bg-slate-50 focus:border-amber-400 focus:bg-white transition-colors" /></div>
+                           <div><label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Akhir Sem. 2 (SAT)</label><input value={getNorm('sas_sat', 'SAT')} onChange={(e) => handleRubrikFieldChange('sas_sat', e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black bg-slate-50 focus:border-amber-400 focus:bg-white transition-colors" /></div>
+                        </div>
+                     )}
+                     {selRubrikMapel !== 'NORMAL' && rubrikForm[selRubrikMapel] && (
+                        <div className="space-y-4">
+                           {rubrikForm[selRubrikMapel].categories.map((cat, cIdx) => (
+                               <div key={cIdx} className="border-2 border-slate-100 rounded-2xl p-4 bg-slate-50/50 relative hover:border-amber-200 transition-colors">
+                                  <div className="flex flex-col sm:flex-row gap-4">
+                                     <div className="w-full sm:w-1/3"><label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Nama Kategori {cIdx+1}</label><input value={cat.name} onChange={(e) => handleRubrikCatChange(selRubrikMapel, cIdx, e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black shadow-sm focus:border-amber-400 focus:bg-white transition-colors" /></div>
+                                     <div className="flex-1"><label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Poin Penilaian (Pisahkan dengan koma ",")</label><textarea rows="2" value={cat.items.join(', ')} onChange={(e) => handleRubrikItemsChange(selRubrikMapel, cIdx, e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold shadow-sm focus:border-amber-400 focus:bg-white transition-colors leading-relaxed"></textarea></div>
+                                  </div>
+                               </div>
+                           ))}
+                        </div>
+                     )}
+                  </div>
+               </div>
+            )}
+
+            {view === 'guru' && (
+              <div className="space-y-4 animate-in fade-in">
+                <form onSubmit={handleAddTeacher} className="flex flex-col sm:flex-row gap-2.5 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 hover:scale-[1.01] transition-all">
+                  <input type="text" placeholder="Nama Guru Baru" value={newTeacherName} onChange={e=>setNewTeacherName(e.target.value)} className="flex-1 px-3 py-2 text-xs font-bold rounded-xl border" required />
+                  <input type="text" placeholder="Pass (123)" value={newTeacherPass} onChange={e=>setNewTeacherPass(e.target.value)} className="w-24 px-3 py-2 text-xs font-bold rounded-xl border" />
+                  <input type="text" placeholder="Wali Kls (Opsional)" value={newTeacherWali} onChange={e=>setNewTeacherWali(e.target.value)} className="w-32 px-3 py-2 text-xs font-bold rounded-xl border" />
+                  <button type="submit" className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-[11px] font-black hover:bg-indigo-700 shadow-md">Tambah</button>
+                </form>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {sortedTeachers.map((t, idx) => {
+                    const clr = AVATAR_COLORS[idx % AVATAR_COLORS.length];
+                    const waliAssign = t.assignments.find(a => a.type === 'WALI');
+                    return (
+                      <div key={t.name} className="flex flex-col bg-slate-50 px-3 py-2.5 rounded-xl border border-slate-200 hover:scale-[1.02] transition-all group">
+                        <div className="flex justify-between items-center w-full">
+                          <div className="flex gap-2.5 items-center pr-2"><div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black ${clr}`}>{t.name.charAt(0)}</div><span className="font-bold text-[11px]">{t.name}</span></div>
+                          <div className="flex gap-1 flex-none opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => { setEditingTeacherObj(t); setEditingTeacherName(t.name); setEditingTeacherPass(t.password); setEditingTeacherWali(waliAssign?waliAssign.classId:''); }} className="text-slate-400 hover:text-indigo-600 p-1.5 bg-white rounded-lg shadow-sm border"><IconEdit className="w-3.5 h-3.5"/></button>
+                            <button onClick={() => setDeletePrompt({show:true, type:'teacher', target:t.name})} className="text-slate-400 hover:text-rose-600 p-1.5 bg-white rounded-lg shadow-sm border"><IconTrash className="w-3.5 h-3.5"/></button>
+                          </div>
+                        </div>
+                        {waliAssign && <div className="mt-2 ml-11"><span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-1.5 py-0.5 rounded">👑 WALI KELAS {waliAssign.classId}</span></div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {view === 'mapel' && (
+              <div className="space-y-4 animate-in fade-in">
+                <form onSubmit={handleAddMapel} className="flex flex-col sm:flex-row gap-2.5 p-4 bg-fuchsia-50/50 rounded-2xl border border-fuchsia-100 hover:scale-[1.01] transition-all">
+                  <input type="text" placeholder="Mapel Baru (Cth: Koding)" value={newMapelName} onChange={e=>setNewMapelName(e.target.value)} className="flex-1 px-3 py-2 text-xs font-bold rounded-xl border border-fuchsia-200" required />
+                  <button type="submit" className="bg-fuchsia-600 text-white px-5 py-2 rounded-xl text-[11px] font-black hover:bg-fuchsia-700 shadow-md">Tambah</button>
+                </form>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                  {mapelsList.map((m, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-slate-50 px-3 py-2.5 rounded-xl border border-slate-200 hover:scale-[1.02] transition-all group">
+                      <span className="font-bold text-[11px] truncate pr-2">{m}</span>
+                      <div className="flex gap-1 flex-none opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setEditingMapel(m); setEditMapelName(m); }} className="text-slate-400 hover:text-indigo-600 p-1 bg-white rounded shadow-sm border"><IconEdit className="w-3.5 h-3.5"/></button>
+                        <button onClick={() => setDeletePrompt({show:true, type:'mapel', target:m})} className="text-slate-400 hover:text-rose-600 p-1 bg-white rounded shadow-sm border"><IconTrash className="w-3.5 h-3.5"/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {view === 'siswa' && (
+              <div className="space-y-4 animate-in fade-in">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 hover:scale-[1.01] transition-all">
+                    <label className="block text-[10px] font-extrabold text-emerald-800 mb-2 uppercase tracking-widest">Pilih Kelas untuk Diedit</label>
+                    <div className="relative hover:scale-[1.01] transition-transform">
+                      <IconBookOpen className="absolute left-3 top-2.5 w-4 h-4 text-emerald-500" />
+                      <select value={selClass} onChange={e=>{setSelClass(e.target.value); setEditingStudentObj(null);}} className="w-full pl-9 pr-3 py-2 text-xs font-bold rounded-xl border border-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 text-slate-800 bg-white cursor-pointer shadow-sm hover:bg-emerald-50/20 transition-all">
+                        <option value="">-- Silakan Pilih Kelas --</option>
+                        {Object.keys(masterData.students).filter(k => k !== "__MAPELS__" && k !== "__SCHEMA__" && k !== "__ADMIN__").map(k => <option key={k} value={k}>Kelas {k}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <form onSubmit={handleAddClass} className="sm:w-1/3 bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col gap-2 justify-end hover:border-slate-300 hover:scale-[1.01] hover:-translate-y-0.5 transition-all shadow-sm">
+                    <input type="text" placeholder="Nama Kelas Baru" value={newClassName} onChange={e=>setNewClassName(e.target.value)} className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-300 shadow-sm" required />
+                    <button type="submit" className="w-full bg-slate-800 text-white px-3 py-2 rounded-xl text-[11px] font-black hover:bg-slate-700 transition-all hover:scale-[1.03] active:scale-95 shadow-md flex items-center justify-center gap-1.5"><IconPlus className="w-4 h-4"/> Buat Kelas</button>
+                  </form>
+                </div>
+
+                {selClass && (
+                  <div className="bg-white rounded-3xl p-5 shadow-lg border border-slate-100 animate-in fade-in slide-in-from-bottom-2">
+                    <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
+                      <h3 className="font-black text-emerald-900 text-sm uppercase tracking-wide flex items-center gap-2"><IconUsers className="w-5 h-5 text-emerald-500"/> Daftar Siswa: Kelas {selClass}</h3>
+                      <button onClick={() => setDeletePrompt({show:true, type:'class', target:selClass})} className="text-rose-600 font-bold bg-rose-50 px-2 py-1 rounded-lg">Hapus Kelas</button>
+                    </div>
+                    
+                    <form onSubmit={handleAddStudent} className="flex flex-col sm:flex-row gap-2 mb-4 bg-emerald-50/50 p-3 rounded-xl border border-emerald-100">
+                      <input name="id" type="text" placeholder="No Presensi" className="w-full sm:w-24 px-3 py-2 text-xs font-bold rounded-lg border border-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 shadow-sm bg-white" required />
+                      <input name="name" type="text" placeholder="Nama Lengkap Siswa" className="flex-1 px-3 py-2 text-xs font-bold rounded-lg border border-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 shadow-sm bg-white" required />
+                      <button type="submit" className="bg-emerald-600 text-white px-5 py-2 rounded-lg text-xs font-black hover:bg-emerald-700 transition-all hover:scale-[1.03] active:scale-95 shadow-md">Tambah</button>
+                    </form>
+
+                    <div className="max-h-72 overflow-y-auto pr-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                      {sortedStudents.length === 0 ? <p className="text-[11px] text-slate-400 text-center py-4 col-span-full">Kelas ini masih kosong.</p> : 
+                        sortedStudents.map(s => (
+                          <div key={s.id} className="flex justify-between items-center bg-slate-50 px-3 py-2.5 rounded-xl border border-slate-200 hover:scale-[1.02] transition-all duration-300 group">
+                            <div className="flex gap-2.5 items-center truncate pr-2">
+                              <span className="text-[10px] font-black text-white bg-slate-400 px-1.5 py-0.5 rounded transition-all">{s.id}</span>
+                              <span className="text-[11px] font-bold text-slate-800 truncate">{s.name}</span>
+                            </div>
+                            <div className="flex gap-1.5 flex-none opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => openEditStudentModal(s)} className="text-slate-400 hover:text-indigo-600 p-1.5 bg-white rounded-lg border border-slate-100 transition-all hover:scale-110 shadow-sm" title="Edit Siswa"><IconEdit className="w-3.5 h-3.5"/></button>
+                              <button onClick={() => setDeletePrompt({show:true, type:'student', target:s.id})} className="text-slate-400 hover:text-rose-600 p-1.5 bg-white rounded-lg border border-slate-100 transition-all hover:scale-110 shadow-sm" title="Hapus Siswa"><IconTrash className="w-3.5 h-3.5"/></button>
+                            </div>
+                          </div>
+                        ))
+                      }
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function Dashboard({ user, activeAssignment, masterData, schemas, onLogout, showToast, onUpdateSuccess, triggerKocakPopup, setActiveAssignment, isFetchingData, onForceRefresh, setMasterData }) {
+      const [selectedSemester, setSelectedSemester] = useState('SAS'); 
+      const [grades, setGrades] = useState({});
+      const [isSaving, setIsSaving] = useState(false);
+      const [gradesHistory, setGradesHistory] = useState([]);
+      const [historyIndex, setHistoryIndex] = useState(-1);
+      const [showPasteModal, setShowPasteModal] = useState(false);
+      const [pasteText, setPasteText] = useState('');
+      const [showSwitchPopup, setShowSwitchPopup] = useState(false);
+      const [showConfirmReset, setShowConfirmReset] = useState(false);
+      const [switchIndex, setSwitchIndex] = useState(0);
+      const [targetAssignment, setTargetAssignment] = useState(null);
+      const [initializedAssignment, setInitializedAssignment] = useState(null);
+
+      const colData = useMemo(() => getMapelSchema(activeAssignment?.mapel, schemas, selectedSemester === 'SAS'), [activeAssignment, schemas, selectedSemester]);
+      const fileUploadRef = useRef(null);
+      const isSAS = selectedSemester === 'SAS';
+      const semCode = isSAS ? 'S' : 'T';
+
+      const theme = {
+        bg: isSAS ? 'bg-[#f8faff]' : 'bg-[#fffcf8]', headerBg: isSAS ? 'bg-indigo-600' : 'bg-rose-600',
+        gradient: isSAS ? 'from-indigo-600 via-blue-500 to-cyan-500' : 'from-rose-600 via-orange-500 to-amber-500', focusRing: isSAS ? 'focus:ring-indigo-500' : 'focus:ring-rose-500',
+        border: isSAS ? 'border-indigo-200' : 'border-rose-200', activeBtn: isSAS ? 'bg-indigo-600 border-indigo-700 text-white shadow-md' : 'bg-rose-600 border-rose-700 text-white shadow-md',
+        inactiveBtn: isSAS ? 'bg-white border-slate-200 text-slate-600 hover:bg-indigo-50 shadow-sm' : 'bg-white border-orange-200 text-rose-800 hover:bg-orange-50 shadow-sm',
+        tableHover: isSAS ? 'hover:bg-indigo-50/50' : 'hover:bg-orange-100/60', rowBg: isSAS ? 'bg-white' : 'bg-[#fffcf8]', inputBg: isSAS ? 'bg-[#eef2ff]' : 'bg-[#fff7ed]', inputBorder: isSAS ? 'border-indigo-200' : 'border-orange-200',
+        stickyHeader: isSAS ? 'bg-[#e2e8f0] text-slate-700' : 'bg-[#fed7aa] text-rose-900', stickyColBg: isSAS ? 'group-hover:bg-[#eef2ff]' : 'group-hover:bg-[#fff7ed]', 
+        modalBg: isSAS ? 'bg-indigo-50 border-indigo-200' : 'bg-rose-50 border-rose-200', modalTextH2: isSAS ? 'text-indigo-950' : 'text-rose-950', modalTextP: isSAS ? 'text-indigo-800' : 'text-rose-800',
+        modalBtnCancel: isSAS ? 'hover:bg-indigo-100 text-indigo-700 border-indigo-200' : 'hover:bg-rose-100 text-rose-700 border-rose-200', modalBtnConfirm: isSAS ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-rose-600 hover:bg-rose-700',
+      };
+
+      const labelSTS = isSAS ? (schemas.NORMAL.sts_sas || schemas.NORMAL.headers[7] || 'STS') : (schemas.NORMAL.sts_sat || 'STS');
+      const labelSAS = isSAS ? (schemas.NORMAL.sas_sas || schemas.NORMAL.headers[8] || 'SAS') : (schemas.NORMAL.sas_sat || 'SAT');
+      const tfHeaders = schemas.NORMAL.headers.slice(0, 7);
+      const firstUhLabel = schemas.NORMAL.headers[0] || 'UH';
+      const isWaliMode = activeAssignment?.type === 'WALI';
+
+      const classStudents = useMemo(() => {
+        if (!activeAssignment || activeAssignment.type === 'WALI' || !masterData.students) return [];
+        const cId = String(activeAssignment.classId).toUpperCase().trim();
+        return [...(masterData.students[cId] || [])].sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric: true}));
+      }, [activeAssignment, masterData.students]);
+
+      const teacherProgress = useMemo(() => {
+        let totalExpected = 0, totalFilled = 0; let assignmentsProgress = [];
+        const tName = String(user.name).toUpperCase().trim();
+        
+        user.assignments.filter(a => a.type !== 'WALI').forEach(a => {
+          const cId = String(a.classId).toUpperCase().trim();
+          const mapel = String(a.mapel).toUpperCase().trim();
+          const prefix = `${cId}-${semCode}|${mapel}|`;
+          
+          let expected = 0;
+          let filled = 0;
+
+          if (activeAssignment && cId === String(activeAssignment.classId).toUpperCase().trim() && mapel === String(activeAssignment.mapel).toUpperCase().trim()) {
+              const schema = getMapelSchema(mapel, schemas, isSAS);
+              const expItems = schema.type === 'special' ? (schema.keys.length - 1) : schema.keys.length;
+              expected = classStudents.length * expItems;
+              
+              classStudents.forEach(student => {
+                  schema.keys.forEach((key, idx) => {
+                      const val = grades[student.id]?.[key];
+                      if (val !== "" && val !== undefined && val !== null && (schema.type !== 'special' || idx > 0)) {
+                          filled++;
+                      }
+                  });
+              });
+          } else {
+              const exactKeyMatch = Object.keys(masterData.gradesSummary || {}).find(k => k.toUpperCase() === `${prefix}${tName}`);
+              const matchingKey = exactKeyMatch || Object.keys(masterData.gradesSummary || {}).find(k => k.toUpperCase().startsWith(prefix));
+              const sum = masterData.gradesSummary?.[matchingKey] || { uhCount: 0, uhTotal: 0 };
+              expected = sum.uhTotal || 0;
+              filled = sum.uhCount || 0;
+          }
+
+          totalExpected += expected; totalFilled += filled;
+          assignmentsProgress.push({ ...a, pct: expected === 0 ? 0 : Math.round((filled / expected) * 100) });
+        });
+        return { globalPct: totalExpected === 0 ? 0 : Math.round((totalFilled / totalExpected) * 100), assignmentsProgress };
+      }, [user.assignments, masterData.gradesSummary, semCode, user.name, activeAssignment, classStudents, grades, schemas, isSAS]);
+
+      useEffect(() => { setInitializedAssignment(null); }, [activeAssignment, selectedSemester]);
+
+      useEffect(() => {
+        if (!activeAssignment || isWaliMode) return;
+        const cId = String(activeAssignment.classId).toUpperCase().trim();
+        const assignKey = `${cId}-${selectedSemester}-${activeAssignment.mapel}`;
+        if (masterData.students && initializedAssignment !== assignKey) {
+          const serverKey = `${cId}-${semCode}|${activeAssignment.mapel.toUpperCase()}`;
+          const serverGradesRaw = masterData.gradesData?.[serverKey] || {};
+          const initialGrades = {};
+          classStudents.forEach(s => { 
+            const rawData = serverGradesRaw[s.id];
+            if (rawData && rawData.length > 0) { const mapped = {}; colData.keys.forEach((key, idx) => { mapped[key] = rawData[idx] !== undefined ? rawData[idx] : ""; }); initialGrades[s.id] = mapped; } 
+            else { initialGrades[s.id] = colData.keys.reduce((acc, col) => ({ ...acc, [col]: '' }), {}); }
+          });
+          setGrades(initialGrades); setGradesHistory([initialGrades]); setHistoryIndex(0); setInitializedAssignment(assignKey);
+        }
+      }, [activeAssignment, selectedSemester, masterData, colData.keys, semCode, isWaliMode, initializedAssignment, classStudents]);
+
+      const isGradesEmpty = () => { if (!classStudents.length) return true; return !Object.values(grades).some(studentGrades => Object.entries(studentGrades).some(([k, v]) => k !== 'penguji' && v !== '' && v !== null && v !== undefined)); };
+      const updateGrades = (newGrades) => { const updatedHistory = gradesHistory.slice(0, historyIndex + 1); setGradesHistory([...updatedHistory, newGrades]); setHistoryIndex(updatedHistory.length); setGrades(newGrades); };
+      const handleGradeChange = (studentId, columnKey, value) => { if (columnKey === 'penguji') { updateGrades({ ...grades, [studentId]: { ...grades[studentId], [columnKey]: value } }); return; } const numericVal = value.replace(/[^0-9]/g, ''); if (numericVal === '') { updateGrades({ ...grades, [studentId]: { ...grades[studentId], [columnKey]: '' } }); return; } const num = Number(numericVal); if (num >= 0 && num <= 100) { updateGrades({ ...grades, [studentId]: { ...grades[studentId], [columnKey]: num.toString() } }); } };
+      
+      const handleKeyDown = (e, rowIdx, colIdx) => {
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Tab'].includes(e.key)) {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') e.preventDefault(); 
+          let nextRow = rowIdx; let nextCol = colIdx;
+          if (e.key === 'ArrowUp') nextRow = Math.max(0, rowIdx - 1); else if (e.key === 'ArrowDown' || e.key === 'Enter') nextRow = Math.min(classStudents.length - 1, rowIdx + 1);
+          else if (e.key === 'ArrowLeft') { if (e.target.selectionStart === 0) { e.preventDefault(); nextCol = Math.max(0, colIdx - 1); } }
+          else if (e.key === 'ArrowRight') { if (e.target.selectionEnd === e.target.value.length) { e.preventDefault(); nextCol = Math.min(colData.keys.length - 1, colIdx + 1); } }
+          else if (e.key === 'Tab') { e.preventDefault(); if (e.shiftKey) { nextCol = colIdx - 1; if (nextCol < 0) { nextCol = colData.keys.length - 1; nextRow = Math.max(0, rowIdx - 1); } } else { nextCol = colIdx + 1; if (nextCol >= colData.keys.length) { nextCol = 0; nextRow = Math.min(classStudents.length - 1, rowIdx + 1); } } }
+          if (nextRow !== rowIdx || nextCol !== colIdx) { e.preventDefault(); const nextInput = document.getElementById(`input-${nextRow}-${nextCol}`); if (nextInput) { nextInput.focus(); setTimeout(() => nextInput.select(), 10); } }
+        }
+      };
+
+      const handlePasteBlock = () => {
+        if (!pasteText.trim()) return; const rows = pasteText.split('\n').map(row => row.split('\t')); let newGrades = { ...grades }; let pasteCount = 0; const startColIdx = colData.type === 'special' ? 1 : 0; 
+        rows.forEach((row, i) => { const student = classStudents[i]; if (!student) return; let studentGrades = { ...newGrades[student.id] }; row.forEach((val, j) => { const colKey = colData.keys[startColIdx + j]; if (!colKey) return; const cleanVal = val.replace(/\r/g, '').trim(); if (cleanVal === '' || (!isNaN(cleanVal) && Number(cleanVal) >= 0 && Number(cleanVal) <= 100)) { studentGrades[colKey] = cleanVal; pasteCount++; } }); newGrades[student.id] = studentGrades; });
+        updateGrades(newGrades); setShowPasteModal(false); setPasteText(''); showToast(`Tertempel ${pasteCount} nilai!`, "success");
+      };
+
+      const handlePaste = (e, startRowIdx, startColIdx) => {
+        e.preventDefault(); const pasteData = e.clipboardData.getData('Text'); if (!pasteData) return; const rows = pasteData.split('\n').map(row => row.split('\t')); let newGrades = { ...grades }; let pasteCount = 0;
+        rows.forEach((row, i) => { const student = classStudents[startRowIdx + i]; if (!student) return; let studentGrades = { ...newGrades[student.id] }; row.forEach((val, j) => { const colKey = colData.keys[startColIdx + j]; if (!colKey) return; const cleanVal = val.replace(/\r/g, '').trim(); if (colKey === 'penguji') { if (cleanVal !== '') { studentGrades[colKey] = cleanVal; pasteCount++; } } else { if (cleanVal === '' || (!isNaN(cleanVal) && Number(cleanVal) >= 0 && Number(cleanVal) <= 100)) { studentGrades[colKey] = cleanVal; pasteCount++; } } }); newGrades[student.id] = studentGrades; });
+        updateGrades(newGrades); showToast(`Berhasil menempelkan ${pasteCount} data!`, 'success');
+      };
+
+      const handleUndo = () => { if (historyIndex > 0) { const prevIndex = historyIndex - 1; setHistoryIndex(prevIndex); setGrades(gradesHistory[prevIndex]); showToast("Undo berhasil!", "success"); } };
+      const handleRedo = () => { if (historyIndex < gradesHistory.length - 1) { const nextIndex = historyIndex + 1; setHistoryIndex(nextIndex); setGrades(gradesHistory[nextIndex]); showToast("Redo berhasil!", "success"); } };
+
+      const applyOptimisticUpdate = (newGradesMap) => {
+          if(!activeAssignment || activeAssignment.type === 'WALI') return;
+          const cId = String(activeAssignment.classId).toUpperCase().trim();
+          const serverKey = `${cId}-${semCode}|${activeAssignment.mapel.toUpperCase()}`;
+          const summaryKey = `${cId}-${semCode}|${activeAssignment.mapel.toUpperCase()}|${user.name}`;
+          
+          let newGradesData = { ...(masterData.gradesData || {}) };
+          let newGradesSummary = { ...(masterData.gradesSummary || {}) };
+          if (!newGradesData[serverKey]) newGradesData[serverKey] = {};
+          
+          let uhCount = 0;
+          let expectedItems = colData.type === 'special' ? (colData.keys.length - 1) : colData.keys.length;
+          let uhTotal = classStudents.length * expectedItems;
+
+          classStudents.forEach(student => {
+             let studentGradesRaw = [];
+             colData.keys.forEach((key, idx) => {
+                 const val = newGradesMap[student.id]?.[key] || "";
+                 studentGradesRaw.push(val);
+                 if (val !== "" && (colData.type !== 'special' || idx > 0)) uhCount++;
+             });
+             newGradesData[serverKey][student.id] = studentGradesRaw;
+          });
+
+          const existingSummary = newGradesSummary[summaryKey] || { stsCount: 0, stsTotal: 0, sasCount: 0, sasTotal: 0 };
+          newGradesSummary[summaryKey] = { ...existingSummary, uhCount: uhCount, uhTotal: uhTotal };
+
+          const updatedMasterData = { ...masterData, gradesData: newGradesData, gradesSummary: newGradesSummary };
+          setMasterData(updatedMasterData);
+          localStorage.setItem('astaga_master_cache', JSON.stringify(updatedMasterData));
+      };
+
+      const handleSaveToSpreadsheet = async () => {
+        if (isGradesEmpty()) { triggerKocakPopup(KOCAK_EMPTY_WARNINGS[0], isSAS); return; }
+
+        for (let student of classStudents) {
+            const studentGrades = grades[student.id] || {};
+            for (let k of colData.keys) {
+                if (k !== 'penguji') {
+                    const val = studentGrades[k];
+                    if (val !== '' && val !== undefined && val !== null && !isNaN(val)) {
+                        if (Number(val) < 70) {
+                            triggerKocakPopup(`Eh eh, si ${student.name} masih ada nilai merah tuh (< 70)! 🚨 Tolong dong dikatrol dikit aja biar bisa dikirim~ 🙏🥺`, isSAS);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (colData.type === 'normal') {
+            for (let student of classStudents) {
+                const studentGrades = grades[student.id] || {};
+                const hasAnyGrade = colData.keys.some(k => k !== 'penguji' && studentGrades[k] !== '' && studentGrades[k] !== undefined && studentGrades[k] !== null);
+                
+                if (hasAnyGrade) {
+                    const uhValues = [];
+                    for (let i = 0; i < 7; i++) { 
+                        const val = studentGrades[colData.keys[i]];
+                        if (val !== '' && val !== undefined && val !== null) {
+                            uhValues.push(Number(val));
+                        }
+                    }
+                    
+                    if (uhValues.length < 2) {
+                        triggerKocakPopup(`Ups! ${student.name} baru punya ${uhValues.length} nilai UH nih. Kasih minimal 2 dong, biar adil~ ✌️😂`, isSAS);
+                        return; 
+                    }
+                }
+            }
+        }
+
+        setIsSaving(true);
+        applyOptimisticUpdate(grades);
+        
+        const dataToSubmit = { action: "saveGrades", guru: user.name, kelas: activeAssignment.classId, semester: selectedSemester, mapel: activeAssignment.mapel, isSpecial: colData.type === 'special', schema: colData.schema, keys: colData.keys, grades: classStudents.map(student => ({ id: student.id, nama: student.name, ...grades[student.id] })) };
+        try { 
+            await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dataToSubmit) }); 
+            showToast('Selesai! Nilai tersimpan di Awan ☁️', 'success'); 
+        } catch (error) { 
+            showToast('Gagal kirim ke Awan.', 'error'); 
+        } finally { 
+            setIsSaving(false); 
+        }
+      };
+
+      const executeResetServer = async () => {
+        setShowConfirmReset(false); setIsSaving(true); 
+        const emptyGrades = {}; classStudents.forEach(s => { emptyGrades[s.id] = colData.keys.reduce((acc, col) => ({ ...acc, [col]: '' }), {}); });
+        applyOptimisticUpdate(emptyGrades); updateGrades(emptyGrades);
+        
+        const dataToSubmit = { action: "saveGrades", guru: user.name, kelas: activeAssignment.classId, semester: selectedSemester, mapel: activeAssignment.mapel, isSpecial: colData.type === 'special', schema: colData.schema, keys: colData.keys, grades: classStudents.map(student => ({ id: student.id, nama: student.name, ...emptyGrades[student.id] })) };
+        try { 
+            await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dataToSubmit) }); 
+            showToast('Berhasil! Data di GAS dikosongkan ☁️', 'success'); 
+        } catch (error) { 
+            showToast('Gagal mereset ke GAS.', 'error'); 
+        } finally { 
+            setIsSaving(false); 
+        }
+      };
+
+      const requestSwitchClass = (assignment) => { if (assignment.classId === activeAssignment.classId && assignment.mapel === activeAssignment.mapel) return; setSwitchIndex(Math.floor(Math.random() * SWITCH_CLASS_MSGS.length)); setTargetAssignment(assignment); setShowSwitchPopup(true); };
+      const confirmSwitchClass = () => { setActiveAssignment(targetAssignment); setShowSwitchPopup(false); };
+
+      const downloadDetailedGradesExcel = () => {
+        const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"]; const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]; const now = new Date(); const timeString = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()} - Jam ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
+        
+        const orderedMapels = sortMapels(masterData.students["__MAPELS__"] || DEFAULT_MAPELS);
+        const classId = activeAssignment.classId; const mapelsToExport = isWaliMode ? orderedMapels.map(m => ({ name: m, ...getMapelSchema(m, schemas, isSAS) })) : [{ name: activeAssignment.mapel, ...colData }];
+        const targetStudents = isWaliMode ? [...(masterData.students[classId] || [])].sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric: true})) : classStudents;
+        const aoa = []; const merges = []; const cols = [{wch: 5}, {wch: 15}, {wch: 35}]; const rowsHeights = []; for(let i=0; i<500; i++) rowsHeights.push({hpx: 25});
+        const borderAll = { top: {style: 'thin', color: {auto: 1}}, bottom: {style: 'thin', color: {auto: 1}}, left: {style: 'thin', color: {auto: 1}}, right: {style: 'thin', color: {auto: 1}} };
+        const setCell = (r, c, val, style) => { while(aoa.length <= r) aoa.push([]); while(aoa[r].length <= c) aoa[r].push({v:'', s:{}}); aoa[r][c] = { v: val, t: (val !== "" && !isNaN(val)) ? 'n' : 's', s: style || {} }; };
+        const addMerge = (r1, c1, r2, c2, style) => { merges.push({s:{r:r1, c:c1}, e:{r:r2, c:c2}}); for(let r = r1; r <= r2; r++) { for(let c = c1; c <= c2; c++) { if(r===r1 && c===c1) continue; setCell(r, c, "", style); } } };
+        const titleStr = isWaliMode ? `REKAP NILAI WALI KELAS - KELAS ${classId} (${selectedSemester})` : `REKAP NILAI ${activeAssignment.mapel.toUpperCase()} - KELAS ${classId} (${selectedSemester})`;
+        setCell(0, 0, titleStr, { font: { bold: true, sz: 14, color: { rgb: "1E3A8A" } }}); setCell(1, 0, `Waktu Diunduh: ${timeString}`, { font: { bold: true, italic: true }}); setCell(2, 0, `Guru: ${user.name}`, { font: { bold: true }});
+        const R_HEAD = 4; const hStyleBase = { font: {bold:true, color:{rgb:"000000"}}, alignment:{horizontal:"center", vertical:"center", wrapText:true}, border: borderAll }; const hStyleMain = { ...hStyleBase, fill: {fgColor:{rgb:"5EEAD4"}} };
+        setCell(R_HEAD, 0, "No.", hStyleMain); addMerge(R_HEAD, 0, R_HEAD+3, 0, hStyleMain); setCell(R_HEAD, 1, "ID Siswa", hStyleMain); addMerge(R_HEAD, 1, R_HEAD+3, 1, hStyleMain); setCell(R_HEAD, 2, "Nama Siswa", hStyleMain); addMerge(R_HEAD, 2, R_HEAD+3, 2, hStyleMain);
+        let cIdx = 3; const findGuruForMapel = (mapel) => { const t = masterData.teachers.find(tch => tch.assignments.some(a => a.classId === classId && a.mapel === mapel)); return t ? t.name : "BELUM DITETAPKAN"; };
+        mapelsToExport.forEach(m => {
+            const theme = MAPEL_THEMES[m.name] || MAPEL_THEMES["KODING"]; const guru = isWaliMode ? findGuruForMapel(m.name) : user.name; const cColor = theme.bg.replace("#", ""); const cLight = theme.light.replace("#", ""); const hStyleMapel = { ...hStyleBase, fill: {fgColor:{rgb:cColor}}, font:{bold:true, color:{rgb:"FFFFFF"}} }; const hStyleSub = { ...hStyleBase, fill: {fgColor:{rgb:cLight}} };
+            if (m.type === 'normal') {
+                const w = m.keys.length; for(let i=0; i<w; i++) cols.push({wch: 7});
+                setCell(R_HEAD, cIdx, `GURU: ${guru}`, { ...hStyleBase, fill:{fgColor:{rgb:"CBD5E1"}} }); addMerge(R_HEAD, cIdx, R_HEAD, cIdx+w-1, { ...hStyleBase, fill:{fgColor:{rgb:"CBD5E1"}} });
+                setCell(R_HEAD+1, cIdx, m.name, hStyleMapel); addMerge(R_HEAD+1, cIdx, R_HEAD+1, cIdx+w-1, hStyleMapel);
+                setCell(R_HEAD+2, cIdx, "FORMATIF (UH)", hStyleMapel); addMerge(R_HEAD+2, cIdx, R_HEAD+2, cIdx+6, hStyleMapel);
+                for(let i=0; i<7; i++) { setCell(R_HEAD+3, cIdx+i, m.headers[i] || `UH${i+1}`, hStyleSub); }
+                const stsCol = cIdx + 7; const sasCol = cIdx + 8;
+                setCell(R_HEAD+2, stsCol, labelSTS, { ...hStyleBase, fill: {fgColor:{rgb:"F9A8D4"}} }); addMerge(R_HEAD+2, stsCol, R_HEAD+3, stsCol, { ...hStyleBase, fill: {fgColor:{rgb:"F9A8D4"}} });
+                setCell(R_HEAD+2, sasCol, labelSAS, { ...hStyleBase, fill: {fgColor:{rgb:"F97316"}} }); addMerge(R_HEAD+2, sasCol, R_HEAD+3, sasCol, { ...hStyleBase, fill: {fgColor:{rgb:"F97316"}} });
+                cIdx += w;
+            } else {
+                const w = m.keys.length; cols.push({wch: 15}); for(let i=1; i<w; i++) cols.push({wch: 6});
+                setCell(R_HEAD, cIdx, m.name, hStyleMapel); addMerge(R_HEAD, cIdx, R_HEAD, cIdx+w-1, hStyleMapel);
+                setCell(R_HEAD+1, cIdx, "PENGUJI", { ...hStyleBase, fill:{fgColor:{rgb:"E2E8F0"}} }); addMerge(R_HEAD+1, cIdx, R_HEAD+3, cIdx, { ...hStyleBase, fill:{fgColor:{rgb:"E2E8F0"}} });
+                let subCol = cIdx + 1;
+                m.schema.categories.forEach((cat) => {
+                    const catColor = cat.color.replace('#',''); const catStyle = { ...hStyleBase, fill: {fgColor:{rgb:catColor}}, font: {bold:true, color:{rgb:"FFFFFF"}} };
+                    setCell(R_HEAD+1, subCol, cat.name, catStyle); addMerge(R_HEAD+1, subCol, R_HEAD+1, subCol + (cat.items.length*3) - 1, catStyle);
+                    cat.items.forEach(item => {
+                        setCell(R_HEAD+2, subCol, item, hStyleSub); addMerge(R_HEAD+2, subCol, R_HEAD+2, subCol+2, hStyleSub);
+                        setCell(R_HEAD+3, subCol, firstUhLabel, { ...hStyleBase, fill:{fgColor:{rgb:"F8FAFC"}} }); setCell(R_HEAD+3, subCol+1, labelSTS, { ...hStyleBase, fill:{fgColor:{rgb:"F8FAFC"}} }); setCell(R_HEAD+3, subCol+2, labelSAS, { ...hStyleBase, fill:{fgColor:{rgb:"F8FAFC"}} });
+                        subCol += 3;
+                    });
+                });
+                cIdx += w;
+            }
+            cols.push({wch: 2}); setCell(R_HEAD, cIdx, "", {fill:{fgColor:{rgb:"000000"}}, border:borderAll}); addMerge(R_HEAD, cIdx, R_HEAD+3, cIdx, {fill:{fgColor:{rgb:"000000"}}, border:borderAll}); cIdx += 1;
+        });
+
+        let R_DATA = R_HEAD + 4;
+        targetStudents.forEach((student, rIdx) => {
+            const styleData = { alignment:{horizontal:"center", vertical:"center"}, border: borderAll }; const styleName = { alignment:{horizontal:"left", vertical:"center"}, border: borderAll, font:{bold:true} };
+            setCell(R_DATA, 0, rIdx + 1, styleData); setCell(R_DATA, 1, student.id, styleData); setCell(R_DATA, 2, student.name, { ...styleName, fill: {fgColor:{rgb:"E0F2FE"}} }); 
+            let cIdxData = 3;
+            mapelsToExport.forEach(m => {
+                const serverKey = `${classId}-${semCode}|${m.name.toUpperCase()}`; const rawData = isWaliMode ? (masterData.gradesData?.[serverKey]?.[student.id] || []) : (grades[student.id] || {});
+                const theme = MAPEL_THEMES[m.name] || MAPEL_THEMES["KODING"]; const cLight = theme.light.replace("#", "");
+                m.keys.forEach((key, keyIdx) => {
+                    const val = isWaliMode ? (rawData[keyIdx] || "") : (rawData[key] || ""); let bgHex = cLight;
+                    if (m.type === 'normal') { if (keyIdx === 7) bgHex = "FCE7F3"; if (keyIdx === 8) bgHex = "FFEDD5"; } else { if (key === 'penguji') bgHex = "F1F5F9"; else if (key.includes('_STS')) bgHex = "FCE7F3"; else if (key.includes('_SAT')) bgHex = "FFEDD5"; }
+                    const cellStyle = { fill: {fgColor: {rgb: bgHex}}, alignment: {horizontal: "center", vertical: "center"}, border: borderAll, font: {bold: true, color: {rgb:"000000"}} };
+                    if (val !== "" && !isNaN(val)) { 
+                        const num = Number(val); 
+                        if (num < 70) { 
+                            cellStyle.font = {color: {rgb: "FFFFFF"}, bold: true}; 
+                            cellStyle.fill = {fgColor: {rgb: "E11D48"}}; 
+                        } else { 
+                            cellStyle.font = {color: {rgb: "059669"}, bold: true}; 
+                        } 
+                    }
+                    setCell(R_DATA, cIdxData, val, cellStyle); cIdxData++;
+                });
+                setCell(R_DATA, cIdxData, "", { fill: {fgColor:{rgb:"000000"}}, border:borderAll }); cIdxData++;
+            });
+            R_DATA++;
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!merges'] = merges; ws['!cols'] = cols; ws['!rows'] = rowsHeights; ws['!views'] = [{state: 'frozen', xSplit: 3, ySplit: R_HEAD + 4}]; 
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Rekap_Nilai");
+        const fileNamePrefix = isWaliMode ? "Rekap_Wali_Kls_" : `Laporan_${activeAssignment.mapel}_Kls_`;
+        XLSX.writeFile(wb, `${fileNamePrefix}${classId}_${selectedSemester}.xlsx`); showToast("Excel Premium Berhasil Diunduh! 🎨", "success");
+      };
+
+      const handleUploadExcelGrades = (e) => {
+        const file = e.target.files[0]; if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type: 'array'}); const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1});
+            let newGrades = { ...grades }; let imported = 0; const theKeys = colData.keys;
+            rows.forEach(parts => {
+              if (parts.length > 2) {
+                  const idSiswa = parts[1] !== undefined ? String(parts[1]).trim() : "";
+                  if (classStudents.find(s => s.id === idSiswa)) {
+                     let studentGrades = { ...newGrades[idSiswa] };
+                     theKeys.forEach((col, idx) => {
+                        const valIndex = 3 + idx;
+                        if (parts[valIndex] !== undefined) {
+                            const cleanVal = String(parts[valIndex]).trim();
+                            if (col === 'penguji') { if(cleanVal !== '') studentGrades[col] = cleanVal; } 
+                            else if (cleanVal === '' || (!isNaN(cleanVal) && Number(cleanVal) >= 0 && Number(cleanVal) <= 100)) { studentGrades[col] = cleanVal; imported++; }
+                        }
+                     });
+                     newGrades[idSiswa] = studentGrades;
+                  }
+              }
+            });
+            if (imported === 0) { triggerKocakPopup("Kosong euy! Gak ada nilai yang nempel. Jangan ubah format barisnya ya bosku~ 🧐", isSAS); } else { updateGrades(newGrades); showToast(`Berhasil mengunggah ${imported} baris nilai!`, 'success'); }
+          } catch(err) { showToast(`Gagal membaca file Excel.`, 'error'); }
+        }; reader.readAsArrayBuffer(file); e.target.value = ''; 
+      };
+
+      const copyMapelGrades = (mapelName, mapelKeys) => {
+          const classId = activeAssignment.classId; const waliStudents = [...(masterData.students[classId] || [])].sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric: true}));
+          const serverKey = `${classId}-${semCode}|${activeAssignment.mapel === 'WALI KELAS' ? mapelName.toUpperCase() : activeAssignment.mapel.toUpperCase()}`;
+          let copyText = "";
+          waliStudents.forEach(student => { const rawData = masterData.gradesData?.[serverKey]?.[student.id] || []; const rowValues = mapelKeys.map((key, idx) => rawData[idx] || ""); copyText += rowValues.join("\t") + "\n"; });
+          const textArea = document.createElement("textarea"); textArea.value = copyText; document.body.appendChild(textArea); textArea.select();
+          try { document.execCommand('copy'); showToast(`Data nilai ${mapelName} berhasil disalin! Siap dipaste ke Raport.`, 'success'); } catch (err) { showToast(`Gagal menyalin data ${mapelName}.`, 'error'); } document.body.removeChild(textArea);
+      };
+
+      const getThickBorderClass = (colKey, type, isLastCol = false) => {
+          const baseClass = "border-slate-300"; const thickClass = "border-r-[3px] !border-r-slate-400";
+          if (type === 'normal') { if (colKey === 'UH7' || colKey === 'STS' || colKey === 'SAS') return thickClass; } 
+          else { if (colKey === 'penguji' || colKey.endsWith('_SAT')) return thickClass; }
+          if (isLastCol) return thickClass; return baseClass;
+      };
+
+      const renderWaliKelasView = () => {
+         const classId = activeAssignment.classId; const waliStudents = [...(masterData.students[classId] || [])].sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric: true}));
+         const orderedMapels = sortMapels(masterData.students["__MAPELS__"] || DEFAULT_MAPELS);
+         const allMapelsSchema = orderedMapels.map(m => ({ name: m, ...getMapelSchema(m, schemas, isSAS) }));
+
+         return (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden mt-3 mx-2 sm:mx-4 mb-2">
+              <div className="flex-none p-3 sm:p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border border-slate-200 bg-white rounded-t-2xl shadow-sm z-50">
+                <h2 className={`text-xs sm:text-sm font-black truncate text-left ${theme.modalTextH2} flex-1`}>👑 REKAPITULASI WALI KELAS - KELAS {classId} ({selectedSemester})</h2>
+                <div className="flex flex-wrap w-full sm:w-auto items-center justify-start sm:justify-end gap-1.5 mt-1 sm:mt-0">
+                   <button onClick={() => onForceRefresh()} disabled={isFetchingData} className={`flex items-center justify-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-1.5 rounded-lg text-[10px] font-black shadow-sm transition-colors disabled:opacity-50`}>{isFetchingData ? <IconRefresh className="w-3 h-3 animate-spin"/> : <IconRefresh className="w-3 h-3"/>} Sync Data</button>
+                   <button onClick={downloadDetailedGradesExcel} className={`flex items-center justify-center gap-1 bg-sky-50 border border-sky-200 text-sky-700 px-3 py-1.5 rounded-lg text-[10px] font-black shadow-sm transition-colors`}><IconDownload className="w-3 h-3"/> Unduh Excel</button>
+                </div>
+              </div>
+              <div className={`flex-1 overflow-auto relative rounded-b-2xl border-x border-b border-slate-200 bg-white`}>
+                <div className="min-w-max bg-white">
+                  <table className="w-full text-xs text-left text-slate-600 border-separate border-spacing-0">
+                    <thead className="shadow-sm bg-white">
+                      <tr>
+                        <th rowSpan="4" className={`w-[30px] min-w-[30px] max-w-[30px] sm:w-[45px] sm:min-w-[45px] sm:max-w-[45px] px-1 sm:px-2 text-center sticky left-0 z-[90] border-b border-r border-slate-300 bg-white bg-clip-padding`}>No</th>
+                        <th rowSpan="4" className={`w-[90px] min-w-[90px] max-w-[90px] sm:w-[180px] sm:min-w-[180px] sm:max-w-[180px] px-1.5 sm:px-3 sticky left-[30px] sm:left-[45px] z-[90] border-b border-r-[3px] !border-r-slate-400 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)] bg-white bg-clip-padding`}>Nama Siswa</th>
+                        {allMapelsSchema.map(m => (
+                            <th key={m.name} colSpan={m.keys.length} className="px-2 text-center border-b border-r-[3px] !border-r-slate-400 bg-clip-padding" style={{ backgroundColor: MAPEL_THEMES[m.name]?.bg, color: MAPEL_THEMES[m.name]?.text }}>
+                               <div className="flex flex-col items-center justify-center gap-1 h-full py-1">
+                                  <span className="font-bold text-[11px] uppercase tracking-widest">{m.name}</span>
+                                  {m.type === 'normal' && (<button onClick={() => copyMapelGrades(m.name, m.keys)} className="flex items-center justify-center gap-1 bg-black/20 hover:bg-black/40 text-white active:scale-95 transition-all px-2 py-0.5 rounded shadow-sm text-[9px] font-black border border-white/20"><IconFileText className="w-3 h-3" /> COPY NILAI</button>)}
+                               </div>
+                            </th>
+                        ))}
+                      </tr>
+                      <tr>
+                        {allMapelsSchema.map(m => {
+                           if (m.type === 'normal') {
+                              return (
+                                <React.Fragment key={m.name}>
+                                  <th colSpan="7" className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 bg-clip-padding" style={{ backgroundColor: MAPEL_THEMES[m.name]?.light, color: MAPEL_THEMES[m.name]?.textDark }}>FORMATIF (UH)</th>
+                                  <th rowSpan="3" className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 bg-pink-200 text-slate-900 bg-clip-padding">{labelSTS}</th>
+                                  <th rowSpan="3" className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 bg-orange-200 text-slate-900 bg-clip-padding">{labelSAS}</th>
+                                </React.Fragment>
+                              );
+                           } else {
+                              return (
+                                <React.Fragment key={m.name}>
+                                  <th rowSpan="3" className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 bg-slate-200 text-slate-900 bg-clip-padding">Penguji</th>
+                                  {m.schema.categories.map((cat, cIdx) => (
+                                      <th key={cat.name} colSpan={cat.items.length * 3} className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 font-black text-[9px] bg-clip-padding" style={{backgroundColor: cat.color, color: "#fff"}}><div className="flex flex-col items-center justify-center gap-1"><span>{cat.name}</span></div></th>
+                                  ))}
+                                </React.Fragment>
+                              );
+                           }
+                        })}
+                      </tr>
+                      <tr>
+                        {allMapelsSchema.map(m => {
+                           if (m.type === 'normal') {
+                              return tfHeaders.map((tf, idx) => <th key={`${m.name}-${tf}`} rowSpan="2" className={`px-0.5 sm:px-2 text-center border-b ${idx===6?'border-r-[3px] !border-r-slate-400':'border-r border-slate-300'} bg-white text-slate-800 bg-clip-padding`}>{tf}</th>);
+                           } else {
+                              return m.schema.categories.flatMap((cat, iIdx) => cat.items.map((item, itemIdx) => <th key={`${m.name}-${item}`} colSpan="3" className={`px-0.5 sm:px-2 text-center border-b ${itemIdx === cat.items.length -1 ? 'border-r-[3px] !border-r-slate-400' : 'border-r border-slate-300'} text-[10px] font-black bg-clip-padding ${ITEM_BG_COLORS[iIdx % ITEM_BG_COLORS.length]}`} style={{color: MAPEL_THEMES[m.name]?.textDark}}>{item}</th>));
+                           }
+                        })}
+                      </tr>
+                      <tr>
+                        {allMapelsSchema.map(m => {
+                           if (m.type === 'normal') return null; 
+                           return m.schema.categories.flatMap((cat, iIdx) => cat.items.flatMap((item, itemIdx) => (
+                              <React.Fragment key={`${m.name}-${item}-uhstssat`}>
+                                <th className={`px-0.5 sm:px-1 text-center border-b border-r border-slate-300 text-[9px] font-bold bg-slate-50 text-slate-800 bg-clip-padding`}>{firstUhLabel}</th>
+                                <th className={`px-0.5 sm:px-1 text-center border-b border-r border-slate-300 text-[9px] font-bold bg-slate-50 text-slate-800 bg-clip-padding`}>{labelSTS}</th>
+                                <th className={`px-0.5 sm:px-1 text-center border-b ${itemIdx === cat.items.length -1 ? 'border-r-[3px] !border-r-slate-400' : 'border-r border-slate-300'} text-[9px] font-bold bg-slate-50 text-slate-800 bg-clip-padding`}>{labelSAS}</th>
+                              </React.Fragment>
+                           )));
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {waliStudents.length === 0 ? (
+                          <tr><td colSpan={100} className="text-center py-8 font-bold text-slate-400 text-sm bg-white border-b border-slate-100">Siswa kosong. Hubungi Admin!</td></tr>
+                      ) : waliStudents.map((student, rowIdx) => (
+                        <tr key={student.id} className={`transition-colors duration-200 group ${theme.tableHover} ${theme.rowBg}`}>
+                          <td className={`w-[30px] min-w-[30px] max-w-[30px] sm:w-[45px] sm:min-w-[45px] sm:max-w-[45px] px-1 sm:px-2 py-4 font-black text-slate-500 text-center align-middle sticky left-0 z-[50] border-b border-r border-slate-200 transition-colors bg-clip-padding text-[9px] sm:text-xs ${theme.rowBg} ${theme.stickyColBg}`}>{rowIdx + 1}</td>
+                          <td className={`w-[90px] min-w-[90px] max-w-[90px] sm:w-[180px] sm:min-w-[180px] sm:max-w-[180px] px-1.5 sm:px-3 py-4 font-bold text-slate-800 align-middle sticky left-[30px] sm:left-[45px] z-[50] truncate border-b border-r-[3px] !border-r-slate-400 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)] transition-colors bg-clip-padding text-[10px] sm:text-xs leading-tight ${theme.rowBg} ${theme.stickyColBg}`}>{student.name}</td>
+                          {allMapelsSchema.map(m => {
+                            const serverKey = `${classId}-${semCode}|${m.name.toUpperCase()}`;
+                            const rawData = masterData.gradesData?.[serverKey]?.[student.id] || [];
+                            return m.keys.map((key, idx) => {
+                               const val = rawData[idx] || '';
+                               const tBorder = getThickBorderClass(key, m.type, idx === m.keys.length - 1);
+                               const isRemedi = val !== '' && !isNaN(val) && Number(val) < 70;
+                               return (
+                                  <td key={`${m.name}-${key}`} className={`p-1 border-b align-middle ${tBorder}`} style={{backgroundColor: MAPEL_THEMES[m.name]?.light}}>
+                                     <div className={`w-[26px] h-[28px] sm:w-[45px] sm:h-[36px] flex items-center justify-center mx-auto rounded border border-white/40 text-center font-bold text-[9px] sm:text-[11px] ${isRemedi ? 'bg-rose-600 text-white shadow-sm' : (val ? 'text-indigo-900 bg-white/60' : 'text-slate-400 bg-white/30')}`}>{val || '-'}</div>
+                                  </td>
+                               );
+                            });
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+         );
+      };
+
+      return (
+        <div className={`h-screen max-h-screen flex flex-col font-sans text-xs overflow-hidden transition-colors duration-500 ${isSAS ? 'theme-sas' : 'theme-sat'} ${theme.bg}`}>
+          <SwitchPopup show={showSwitchPopup} msgIndex={switchIndex} onConfirm={confirmSwitchClass} onCancel={() => setShowSwitchPopup(false)} targetAssign={targetAssignment} isSAS={isSAS} />
+          {showPasteModal && (
+            <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className={`w-full max-w-sm rounded-[28px] p-5 border shadow-2xl transform hover:scale-[1.02] transition-all ${theme.modalBg}`}>
+                <div className="text-4xl mb-2 text-center animate-bounce">🥷</div><h2 className={`text-sm font-black mb-1.5 text-center ${theme.modalTextH2}`}>COPAS JALUR NINJA</h2><p className={`text-[10px] font-semibold mb-3 text-center ${theme.modalTextP}`}>Tinggal Ctrl+C di Excel, trus Ctrl+V di sini. Kelar deh! ✨</p>
+                <textarea rows="5" className={`w-full border rounded-xl p-2.5 text-[10px] ${theme.focusRing} mb-4 bg-white/80 ${theme.inputBorder}`} placeholder="Paste (Ctrl+V) di sini..." value={pasteText} onChange={(e) => setPasteText(e.target.value)} />
+                <div className="flex gap-2"><button onClick={() => { setShowPasteModal(false); setPasteText(''); }} className={`flex-1 py-2 rounded-xl bg-white border font-bold text-[10px] hover:scale-105 active:scale-95 shadow-sm ${theme.modalBtnCancel}`}>Batal</button><button onClick={handlePasteBlock} className={`flex-1 py-2 rounded-xl text-white font-bold text-[10px] shadow-md hover:scale-105 active:scale-95 ${theme.modalBtnConfirm}`}>Tempel Nilai</button></div>
+              </div>
+            </div>
+          )}
+          {showConfirmReset && (
+            <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className={`relative w-full max-w-sm rounded-[28px] p-6 border shadow-2xl transform hover:scale-[1.02] transition-all ${theme.modalBg}`}>
+                <div className="text-4xl mb-2 animate-bounce">😱</div><h2 className={`text-sm font-black mb-1.5 text-center ${theme.modalTextH2}`}>SERIUS NIH?</h2><p className={`text-[10px] font-semibold mb-4 text-center leading-relaxed ${theme.modalTextP}`}>Serius mau <strong>HAPUS SEMUA</strong> nilai {activeAssignment?.mapel} Kelas {activeAssignment?.classId}? Ntar hilang beneran lho, no debat!</p>
+                <div className="flex gap-2"><button onClick={() => setShowConfirmReset(false)} className={`flex-1 py-2.5 rounded-xl bg-white border font-bold text-[10px] shadow-sm active:scale-95 transition-all ${theme.modalBtnCancel}`}>Gak Jadi</button><button onClick={executeResetServer} className={`flex-1 py-2.5 rounded-xl text-white font-bold text-[10px] shadow-md active:scale-95 transition-all ${theme.modalBtnConfirm}`}>Ya, Hapus GAS!</button></div>
+              </div>
+            </div>
+          )}
+
+          <header className={`flex-none text-white shadow-md h-12 flex items-center justify-between px-4 z-30 transition-colors duration-500 ${theme.headerBg}`}>
+            <div className="flex items-center space-x-2"><img src="icon.png" alt="Logo" onError={(e) => { e.target.onerror = null; e.target.style.display = 'none'; }} className="w-6 h-6 object-contain rounded bg-white/20 p-0.5" /><div><h1 className="font-extrabold text-sm tracking-wide leading-none uppercase">{user.name}</h1><p className="text-[9px] text-white/80 font-bold truncate max-w-[200px]">{isWaliMode ? `Guru Kelas ${activeAssignment?.classId}` : `Guru Pengampu Kls ${activeAssignment?.classId} - ${activeAssignment?.mapel}`}</p></div></div>
+            <div className="flex items-center space-x-3">{isFetchingData && <div className="text-right hidden sm:block"><p className="text-[10px] font-bold text-white/80 animate-pulse">Sedang menyinkronkan...</p></div>}<div className="text-right hidden sm:block"><p className="text-[10px] font-bold leading-tight">{user.name}</p></div><button onClick={onLogout} className="p-1.5 bg-black/20 hover:bg-red-500 rounded-full transition-all hover:scale-105 shadow-inner" title="Keluar"><IconLogOut className="w-4 h-4" /></button></div>
+          </header>
+
+          <main className="flex-1 flex flex-col overflow-hidden w-full">
+            <div className="flex-none space-y-2 sm:space-y-3 p-2 sm:p-4 pb-0">
+              <div className={`flex p-1.5 rounded-xl w-full max-w-sm mx-auto shadow-inner transition-colors duration-500 ${isSAS ? 'bg-indigo-200/50' : 'bg-rose-200/50'}`}><button onClick={() => setSelectedSemester('SAS')} className={`flex-1 py-2.5 text-[11px] font-black uppercase rounded-lg transition-all duration-300 ${isSAS ? 'bg-indigo-600 shadow-md text-white scale-105' : 'text-indigo-800 hover:bg-indigo-100/50'}`}>Semester 1 (SAS)</button><button onClick={() => setSelectedSemester('SAT')} className={`flex-1 py-2.5 text-[11px] font-black uppercase rounded-lg transition-all duration-300 ${!isSAS ? 'bg-rose-600 shadow-md text-white scale-105' : 'text-rose-800 hover:bg-rose-100/50'}`}>Semester 2 (SAT)</button></div>
+              <div className={`bg-gradient-to-r ${theme.gradient} rounded-xl p-3 shadow-md relative overflow-hidden flex items-center justify-between hover:scale-[1.01] transition-all mt-2 duration-500`}>
+                <div className="absolute top-0 left-0 w-full h-full bg-white opacity-5 pointer-events-none transform -skew-x-12 scale-150"></div>
+                <div className="relative z-10 flex items-center gap-1.5"><IconActivity className="w-4 h-4 text-white animate-pulse"/><h2 className="text-white font-black text-[11px] uppercase tracking-widest hidden sm:block">Progres Kerjamu</h2><h2 className="text-white font-black text-[11px] uppercase tracking-widest sm:hidden">Progres</h2></div>
+                <div className="relative z-10 flex-1 ml-4 sm:ml-8 max-w-sm bg-white/10 p-1.5 rounded-xl border border-white/20 backdrop-blur-sm flex items-center justify-between gap-3 shadow-inner"><span className="text-white font-black text-[9px] bg-black/20 px-2 py-0.5 rounded border border-white/10">{teacherProgress.globalPct}%</span><div className="flex-1 bg-black/20 rounded-full h-1.5 overflow-hidden"><div className="h-1.5 rounded-full transition-all duration-1000 ease-out bg-gradient-to-r from-rose-400 via-amber-400 via-emerald-400 to-cyan-300 shadow-[0_0_8px_rgba(255,255,255,0.8)]" style={{ width: `${teacherProgress.globalPct}%` }}></div></div></div>
+              </div>
+              <div>
+                <div className={`grid ${user.assignments.length > 3 ? 'grid-rows-2' : 'grid-rows-1'} grid-flow-col auto-cols-[145px] sm:auto-cols-[180px] gap-2 pb-2 overflow-x-auto scrollbar-hide snap-x`}>
+                  {user.assignments.find(a => a.type === 'WALI') && (<button onClick={() => requestSwitchClass(user.assignments.find(a => a.type === 'WALI'))} className={`row-span-2 flex flex-col items-center justify-center px-4 py-3 rounded-xl border transition-all hover:scale-[1.05] active:scale-95 shadow-sm snap-start ${isWaliMode ? 'bg-amber-500 border-amber-600 text-white shadow-md' : 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100'}`}><span className="text-2xl mb-1 block">👑</span><span className={`block text-[11px] font-black text-center leading-snug`}>WALI KELAS<br/>{user.assignments.find(a => a.type === 'WALI').classId}</span></button>)}
+                  {teacherProgress.assignmentsProgress.map((assign, idx) => {
+                    const isActive = assign.classId === activeAssignment?.classId && assign.mapel === activeAssignment?.mapel && assign.type !== 'WALI';
+                    return (
+                      <button key={idx} onClick={() => requestSwitchClass(assign)} className={`flex flex-col justify-center gap-1.5 px-3 py-2.5 rounded-xl border transition-all hover:scale-[1.05] active:scale-95 shadow-sm snap-start ${isActive ? theme.activeBtn : theme.inactiveBtn}`}>
+                        <div className="flex items-center justify-between w-full gap-2"><span className={`text-[11px] sm:text-xs font-black truncate ${isActive?'text-white':isSAS?'text-slate-800':'text-rose-950'}`} title={assign.mapel}>{assign.mapel}</span><span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md whitespace-nowrap ${isActive?'bg-white/20 text-white':isSAS?'bg-indigo-100 text-indigo-700':'bg-rose-100 text-rose-700'}`}>{assign.classId}</span></div>
+                        <div className="w-full flex items-center gap-2"><div className={`flex-1 rounded-full h-1.5 overflow-hidden ${isActive?'bg-black/20':'bg-slate-200'}`}><div className={`h-1.5 rounded-full ${isActive?'bg-white':isSAS?'bg-indigo-500':'bg-rose-500'}`} style={{ width: `${assign.pct}%` }}></div></div><span className={`text-[9px] font-black ${isActive?'text-white':isSAS?'text-slate-500':'text-rose-600'}`}>{assign.pct}%</span></div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {isWaliMode ? renderWaliKelasView() : (
+              <div className={`flex-1 flex flex-col overflow-hidden bg-white rounded-2xl shadow-sm border mt-1 min-h-0 mx-2 sm:mx-4 mb-2 transition-colors duration-500 ${theme.border}`}>
+                <div className="flex-none bg-slate-50 p-2 sm:p-3 border-b border-slate-200">
+                   <div className="flex items-center justify-start sm:justify-between gap-4 overflow-x-auto scrollbar-hide w-full pb-1">
+                     <div className="flex items-center gap-1.5 flex-none">
+                       <button onClick={downloadDetailedGradesExcel} className={`flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white border border-slate-300 ${isSAS ? 'text-indigo-700 hover:bg-indigo-50' : 'text-rose-700 hover:bg-rose-50'} px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black active:scale-95 shadow-sm whitespace-nowrap transition-colors`}><IconDownload className="w-3 h-3"/> Unduh Excel</button>
+                       <button onClick={() => fileUploadRef.current.click()} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-emerald-100 active:scale-95 shadow-sm whitespace-nowrap"><IconUploadCloud className="w-3 h-3"/> Upload</button>
+                       <input type="file" accept=".xls,.xlsx" ref={fileUploadRef} onChange={handleUploadExcelGrades} className="hidden" />
+                       <div className="hidden sm:block w-px h-5 bg-slate-300 mx-1"></div>
+                       <button onClick={() => setShowPasteModal(true)} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-100 active:scale-95 shadow-sm whitespace-nowrap"><IconFileText className="w-3 h-3"/> Paste</button>
+                       <button onClick={handleUndo} disabled={historyIndex <= 0} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white text-slate-700 border border-slate-300 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-50 disabled:opacity-40 shadow-sm whitespace-nowrap">↩️ Undo</button>
+                       <button onClick={handleRedo} disabled={historyIndex >= gradesHistory.length - 1} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white text-slate-700 border border-slate-300 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-50 disabled:opacity-40 shadow-sm whitespace-nowrap">↪️ Redo</button>
+                     </div>
+                     <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto flex-1 sm:flex-none mt-1 sm:mt-0">
+                       <button onClick={() => onForceRefresh()} disabled={isFetchingData} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-sky-50 border border-sky-200 text-sky-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-sky-100 active:scale-95 shadow-sm whitespace-nowrap disabled:opacity-50">{isFetchingData ? <IconRefresh className="w-3 h-3 animate-spin"/> : <IconRefresh className="w-3 h-3"/>} Tarik Data</button>
+                       <div className="hidden sm:block w-px h-5 bg-slate-300 mx-1"></div>
+                       <button onClick={() => { const r = {}; classStudents.forEach(s => r[s.id] = colData.keys.reduce((acc, col) => ({ ...acc, [col]: '' }), {})); updateGrades(r); showToast("Layar Dikosongkan!", "success"); }} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-slate-100 border border-slate-300 text-slate-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-200 active:scale-95 shadow-sm whitespace-nowrap">🗑️ Kosong</button>
+                       <button onClick={() => setShowConfirmReset(true)} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-rose-100 border border-rose-300 text-rose-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-rose-200 active:scale-95 shadow-sm whitespace-nowrap">⚠️ Reset</button>
+                       <button onClick={handleSaveToSpreadsheet} disabled={isSaving || classStudents.length === 0} className={`flex-auto sm:flex-none justify-center flex items-center space-x-1 active:scale-95 text-white px-5 py-2 sm:py-1.5 rounded-lg transition-colors shadow-md disabled:opacity-50 font-black text-[10px] whitespace-nowrap ${theme.headerBg} hover:opacity-90`}>{isSaving ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span> : <IconSend className="w-3 h-3" />}<span>Kirim</span></button>
+                     </div>
+                   </div>
+                </div>
+
+                <div className="flex-1 overflow-auto relative bg-white rounded-b-2xl">
+                  <div className="min-w-max bg-white">
+                    <table className="w-full text-xs text-left text-slate-600 border-separate border-spacing-0">
+                      <thead className="shadow-sm bg-white">
+                      {colData.type === 'normal' ? (
+                        <React.Fragment>
+                        <tr>
+                          <th rowSpan="3" className={`w-[30px] min-w-[30px] max-w-[30px] sm:w-[45px] sm:min-w-[45px] sm:max-w-[45px] px-1 sm:px-2 text-center sticky left-0 z-[90] border-b border-r border-slate-300 bg-white bg-clip-padding`}>No</th>
+                          <th rowSpan="3" className={`w-[90px] min-w-[90px] max-w-[90px] sm:w-[180px] sm:min-w-[180px] sm:max-w-[180px] px-1.5 sm:px-3 sticky left-[30px] sm:left-[45px] z-[90] border-b border-r-[3px] !border-r-slate-400 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)] bg-white bg-clip-padding`}>Nama Siswa</th>
+                          <th colSpan={colData.keys.length} className={`px-2 text-center border-b border-r-[3px] !border-r-slate-400 bg-clip-padding ${isSAS ? 'bg-indigo-500 text-white' : 'bg-rose-500 text-white'}`}>{activeAssignment.mapel}</th>
+                        </tr>
+                        <tr>
+                           <th colSpan="7" className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 bg-slate-100 text-slate-800 bg-clip-padding">FORMATIF (UH)</th>
+                           <th rowSpan="2" className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 bg-pink-200 text-slate-900 bg-clip-padding">{labelSTS}</th>
+                           <th rowSpan="2" className="px-1 text-center border-b border-r-[3px] !border-r-slate-400 bg-orange-200 text-slate-900 bg-clip-padding">{labelSAS}</th>
+                        </tr>
+                        <tr>
+                           {tfHeaders.map((tf, idx) => <th key={tf} className={`px-0.5 sm:px-2 text-center border-b ${idx===6?'border-r-[3px] !border-r-slate-400':'border-r border-slate-300'} bg-white text-slate-800 bg-clip-padding`}>{tf}</th>)}
+                        </tr>
+                        </React.Fragment>
+                        ) : (
+                          <React.Fragment>
+                          <tr>
+                            <th rowSpan="4" className={`w-[30px] min-w-[30px] max-w-[30px] sm:w-[45px] sm:min-w-[45px] sm:max-w-[45px] px-1 sm:px-2 text-center sticky left-0 z-[90] border-b border-r border-slate-300 align-middle bg-white bg-clip-padding`}>No</th>
+                            <th rowSpan="4" className={`w-[90px] min-w-[90px] max-w-[90px] sm:w-[180px] sm:min-w-[180px] sm:max-w-[180px] px-1.5 sm:px-3 sticky left-[30px] sm:left-[45px] z-[90] border-b border-r-[3px] !border-r-slate-400 align-middle shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)] bg-white bg-clip-padding`}>Nama Siswa</th>
+                            <th colSpan={colData.keys.length} className={`px-2 text-center border-b border-r-[3px] !border-r-slate-400 bg-clip-padding ${isSAS ? 'bg-indigo-500 text-white' : 'bg-rose-500 text-white'}`}>{activeAssignment.mapel}</th>
+                          </tr>
+                          <tr>
+                            <th rowSpan="3" className={`px-2 min-w-[60px] sm:min-w-[130px] border-b border-r-[3px] !border-r-slate-400 text-center align-middle bg-slate-200 text-slate-900 bg-clip-padding`}>Penguji</th>
+                            {colData.schema.categories.map((cat, cIdx) => <th key={cat.name} colSpan={cat.items.length * 3} className={`px-1 text-center border-b border-r-[3px] !border-r-slate-400 font-black text-[11px] bg-clip-padding ${isSAS ? 'text-slate-900' : 'text-rose-950'}`} style={{backgroundColor: cat.color}}>{cat.name}</th>)}
+                          </tr>
+                          <tr>
+                            {colData.schema.categories.map((cat, cIdx) => cat.items.map((item, iIdx) => (
+                                <th key={item} colSpan="3" className={`px-0.5 sm:px-2 text-center border-b ${iIdx === cat.items.length -1 ? 'border-r-[3px] !border-r-slate-400' : 'border-r border-slate-300'} text-[10px] font-black bg-clip-padding ${isSAS ? 'text-slate-900' : 'text-rose-950'} ${ITEM_BG_COLORS[cIdx % ITEM_BG_COLORS.length]}`}>{item}</th>
+                            )))}
+                          </tr>
+                          <tr>
+                            {colData.schema.categories.map((cat, cIdx) => cat.items.map((item, iIdx) => (
+                                <React.Fragment key={`${cat.name}-${item}-sub`}>
+                                  <th className={`px-0.5 sm:px-1 text-center border-b border-r border-slate-300 text-[9px] font-bold bg-slate-50 text-slate-800 bg-clip-padding`}>{firstUhLabel}</th>
+                                  <th className={`px-0.5 sm:px-1 text-center border-b border-r border-slate-300 text-[9px] font-bold bg-slate-50 text-slate-800 bg-clip-padding`}>{labelSTS}</th>
+                                  <th className={`px-0.5 sm:px-1 text-center border-b ${iIdx === cat.items.length -1 ? 'border-r-[3px] !border-r-slate-400' : 'border-r border-slate-300'} text-[9px] font-bold bg-slate-50 text-slate-800 bg-clip-padding`}>{labelSAS}</th>
+                                </React.Fragment>
+                            )))}
+                          </tr>
+                          </React.Fragment>
+                        )}
+                      </thead>
+                      <tbody>
+                      {classStudents.length === 0 ? (
+                        <tr><td colSpan={colData.keys.length + 2} className="text-center py-8 font-bold text-slate-400 text-sm bg-white border-b border-slate-100">Siswa kosong. Hubungi Admin!</td></tr>
+                      ) : classStudents.map((student, rowIdx) => (
+                        <tr key={student.id} className={`transition-colors duration-200 group ${theme.tableHover} ${theme.rowBg}`}>
+                          <td className={`w-[30px] min-w-[30px] max-w-[30px] sm:w-[45px] sm:min-w-[45px] sm:max-w-[45px] px-1 sm:px-2 py-4 font-black text-slate-500 text-center align-middle sticky left-0 z-[50] border-b border-r border-slate-200 transition-colors bg-clip-padding text-[9px] sm:text-xs ${theme.rowBg} ${theme.stickyColBg}`}>{rowIdx + 1}</td>
+                          <td className={`w-[90px] min-w-[90px] max-w-[90px] sm:w-[180px] sm:min-w-[180px] sm:max-w-[180px] px-1.5 sm:px-3 py-4 font-bold text-slate-800 align-middle sticky left-[30px] sm:left-[45px] z-[50] truncate border-b border-r-[3px] !border-r-slate-400 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)] transition-colors bg-clip-padding text-[10px] sm:text-xs leading-tight ${theme.rowBg} ${theme.stickyColBg}`}>{student.name}</td>
+                          {colData.keys.map((colKey, colIdx) => {
+                              const val = grades[student.id]?.[colKey];
+                              const tBorder = getThickBorderClass(colKey, colData.type, colIdx === colData.keys.length - 1);
+                              
+                              if (colKey === 'penguji') {
+                                return (
+                                  <td key={colKey} className={`p-1 border-b align-middle ${tBorder} transition-colors ${theme.inputBg}`}>
+                                    <input id={`input-${rowIdx}-${colIdx}`} type="text" value={val||''} onChange={e=>handleGradeChange(student.id, colKey, e.target.value)} onKeyDown={(e)=>handleKeyDown(e, rowIdx, colIdx)} onPaste={(e) => handlePaste(e, rowIdx, colIdx)} className={`w-full min-w-[60px] h-[30px] sm:min-w-[100px] sm:h-[36px] px-1 sm:px-2 rounded border text-[10px] sm:text-xs font-bold ${theme.focusRing} focus:ring-2 transition-all text-center shadow-inner ${theme.inputBorder} bg-white/70 ${isSAS ? 'text-slate-800' : 'text-rose-950'}`}/>
+                                  </td>
+                                );
+                              }
+                              
+                              const isRemedi = val !== '' && !isNaN(val) && Number(val) < 70;
+                              const isSuccess = val !== '' && !isNaN(val) && Number(val) >= 70;
+                              const parts = colKey.split('_');
+                              const itemIdx = parts.length > 1 ? parseInt(parts[0]) : 0; 
+                              const bgClass = colData.type === 'special' ? ITEM_BG_COLORS[itemIdx % ITEM_BG_COLORS.length] : theme.inputBg;
+
+                              return (
+                                <td key={colKey} className={`p-1 border-b align-middle ${tBorder} ${bgClass}`}>
+                                  <input id={`input-${rowIdx}-${colIdx}`} type="text" inputMode="numeric" placeholder="-" value={val || ''} 
+                                    onChange={(e) => handleGradeChange(student.id, colKey, e.target.value)} onKeyDown={(e)=>handleKeyDown(e, rowIdx, colIdx)} onPaste={(e) => handlePaste(e, rowIdx, colIdx)}
+                                    className={`w-[28px] h-[30px] sm:w-[45px] sm:h-[36px] mx-auto block text-center rounded border focus:outline-none focus:ring-2 transition-all font-black text-[10px] sm:text-xs shadow-sm box-border px-0.5
+                                      ${isRemedi ? 'bg-rose-600 text-white border-rose-700 focus:ring-rose-400 placeholder-rose-300 shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)]' 
+                                      : `${theme.rowBg} ${theme.inputBorder} ${theme.focusRing} ` + (isSuccess ? 'text-emerald-700 shadow-[inset_0_1px_3px_rgba(16,185,129,0.3)]' : (isSAS ? 'text-slate-900 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)]' : 'text-rose-950 shadow-[inset_0_1px_2px_rgba(234,88,12,0.1)]'))}
+                                    `} 
+                                  />
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
