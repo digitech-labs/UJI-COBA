@@ -155,7 +155,7 @@
       return "admin123"; 
     };
 
-    const DEFAULT_MASTER_DATA = { teachers: [], students: {}, gradesSummary: {}, gradesData: {} };
+    const DEFAULT_MASTER_DATA = { teachers: [], students: {}, gradesSummary: {}, gradesData: {}, deskripsiMaster: {}, deskripsiData: {} };
 
     const AVATAR_COLORS = ['bg-indigo-200 border-indigo-400 text-indigo-900', 'bg-emerald-200 border-emerald-400 text-emerald-900', 'bg-amber-200 border-amber-400 text-amber-900', 'bg-fuchsia-200 border-fuchsia-400 text-fuchsia-900', 'bg-sky-200 border-sky-400 text-sky-900', 'bg-rose-200 border-rose-400 text-rose-900'];
     
@@ -346,6 +346,223 @@
        );
     }
 
+function DeskripsiDashboard({ teacher, masterData, setMasterData, onLogout, showToast, isFetchingData, onForceRefresh, schemas }) {
+      const [selectedKelas, setSelectedKelas] = useState('');
+      const [selectedSemester, setSelectedSemester] = useState('SAS');
+      const [deskripsiData, setDeskripsiData] = useState({});
+      const [isSaving, setIsSaving] = useState(false);
+      
+      const [pasteMapel, setPasteMapel] = useState(null);
+      const [pasteText, setPasteText] = useState('');
+
+      const isSAS = selectedSemester === 'SAS';
+      const theme = {
+        bg: isSAS ? 'bg-[#f8faff]' : 'bg-[#fffcf8]',
+        header: isSAS ? 'bg-indigo-700' : 'bg-rose-700',
+        text: isSAS ? 'text-indigo-800' : 'text-rose-800',
+        border: isSAS ? 'border-indigo-200' : 'border-rose-200',
+        btn: isSAS ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-rose-600 hover:bg-rose-700',
+      };
+
+      const teacherLevels = useMemo(() => {
+          const levelsMap = {};
+          teacher.assignments.forEach(a => {
+              if (a.type === 'WALI') return;
+              const match = a.classId.match(/^(\d+)\s*(ICP)?/i);
+              if (match) {
+                  const levelName = "KELAS " + match[1] + (match[2] ? " ICP" : "");
+                  if (!levelsMap[levelName]) levelsMap[levelName] = new Set();
+                  levelsMap[levelName].add(a.mapel);
+              }
+          });
+          const result = [];
+          for (let lvl in levelsMap) { result.push({ level: lvl, mapels: Array.from(levelsMap[lvl]).sort() }); }
+          return result.sort((a,b) => a.level.localeCompare(b.level));
+      }, [teacher.assignments]);
+
+      useEffect(() => {
+         if (teacherLevels.length > 0 && !selectedKelas) { setSelectedKelas(teacherLevels[0].level); }
+      }, [teacherLevels, selectedKelas]);
+
+      const getDeskCols = (mapel) => {
+          const special = schemas[mapel.toUpperCase().trim()];
+          if (special) {
+              if (mapel === "IBADAH (WUDHU, TAYAMUM, SHALAT)") return ["Wudhu", "Tayamum", "Shalat"];
+              if (mapel === "TAHFIDZ" || mapel === "IQRA'") return ["TF-1"];
+              return ["TF-1"];
+          }
+          const normKeys = schemas["NORMAL"]?.headers || ['UH1', 'UH2', 'UH3', 'UH4', 'UH5', 'UH6', 'UH7'];
+          const count = normKeys.filter(k => k.startsWith('UH') || k.startsWith('TF') || k.toLowerCase().includes('formatif')).length || 7;
+          return Array.from({length: Math.min(count, 7)}, (_, i) => `TF-${i+1}`);
+      };
+
+      // FUNGSI PENARIK DATA REALTIME DARI GAS
+      useEffect(() => {
+         if (selectedKelas) {
+            const key = `${selectedKelas}_${selectedSemester}`;
+            const rawData = masterData.deskripsiData?.[key] || {};
+            const parsedData = {};
+            for (let m in rawData) {
+                let val = rawData[m];
+                // Pastikan membaca JSON String dari GAS dengan akurat
+                if (typeof val === 'string') {
+                    try { val = JSON.parse(val); } catch(e) {}
+                }
+                parsedData[m] = val || {};
+            }
+            setDeskripsiData(parsedData);
+         }
+      }, [selectedKelas, selectedSemester, masterData.deskripsiData]);
+
+      const handleFieldChange = (mapel, field, value) => {
+          setDeskripsiData(prev => ({ ...prev, [mapel]: { ...(prev[mapel] || {}), [field]: value } }));
+      };
+
+      const handlePasteBlock = () => {
+         if (!pasteText.trim() || !pasteMapel) return;
+         const items = pasteText.split(/[\t\n]/).map(s => s.trim()).filter(Boolean);
+         const cols = getDeskCols(pasteMapel);
+         
+         let newMapelData = { ...(deskripsiData[pasteMapel] || {}) };
+         let successCount = 0;
+         for (let i = 0; i < Math.min(items.length, cols.length); i++) {
+            newMapelData[cols[i]] = items[i];
+            successCount++;
+         }
+         
+         setDeskripsiData(prev => ({ ...prev, [pasteMapel]: newMapelData }));
+         setPasteMapel(null); setPasteText('');
+         showToast(`Berhasil menempelkan ${successCount} deskripsi ke ${pasteMapel}!`, 'success');
+      };
+
+      const handleSave = async () => {
+         setIsSaving(true);
+         const key = `${selectedKelas}_${selectedSemester}`;
+         const newMaster = { ...masterData, deskripsiData: { ...masterData.deskripsiData, [key]: deskripsiData } };
+         setMasterData(newMaster);
+         localStorage.setItem('astaga_master_cache', JSON.stringify(newMaster));
+
+         try {
+            await fetch(SCRIPT_URL, {
+               method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({ action: "saveDeskripsi", kelas: selectedKelas, semester: selectedSemester, deskripsiData })
+            });
+            showToast(`Mantap! Deskripsi ${selectedKelas} (${selectedSemester}) tersimpan di Awan! ☁️`, "success");
+         } catch (e) { showToast("Waduh, gagal kirim deskripsi. Cek sinyal bosku!", "error"); } finally { setIsSaving(false); }
+      };
+
+      const activeMapels = useMemo(() => {
+          const found = teacherLevels.find(t => t.level === selectedKelas);
+          return found ? found.mapels : [];
+      }, [selectedKelas, teacherLevels]);
+
+      return (
+         <div className={`h-screen max-h-screen flex flex-col font-sans text-xs overflow-hidden transition-colors duration-500 ${theme.bg}`}>
+            {pasteMapel && (
+              <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+                <div className={`w-full max-w-sm rounded-[28px] p-5 border shadow-2xl transform hover:scale-[1.02] transition-all bg-white border-slate-200`}>
+                  <div className="text-4xl mb-2 text-center animate-bounce">🥷</div>
+                  <h2 className="text-sm font-black mb-1.5 text-center text-slate-900">PASTE DESKRIPSI</h2>
+                  <p className="text-[10px] font-semibold mb-3 text-center text-slate-600">Salin dari Excel (Vertikal / Horisontal), lalu paste di sini untuk Mapel <b>{pasteMapel}</b>.</p>
+                  <textarea rows="5" className={`w-full border rounded-xl p-2.5 text-[10px] focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-4 bg-slate-50 border-slate-200 leading-relaxed`} placeholder="Paste (Ctrl+V) di sini..." value={pasteText} onChange={(e) => setPasteText(e.target.value)} />
+                  <div className="flex gap-2">
+                    <button onClick={() => { setPasteMapel(null); setPasteText(''); }} className="flex-1 py-2 rounded-xl bg-slate-100 border border-slate-200 font-bold text-[10px] hover:scale-105 active:scale-95 shadow-sm text-slate-600 transition-transform">Batal</button>
+                    <button onClick={handlePasteBlock} className={`flex-1 py-2 rounded-xl text-white font-bold text-[10px] shadow-md hover:scale-105 active:scale-95 transition-transform ${theme.btn}`}>Tempel Data</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <header className={`flex-none text-white shadow-md h-12 flex items-center justify-between px-4 z-30 transition-colors duration-500 ${theme.header}`}>
+               <div className="flex items-center space-x-2">
+                  <div className="bg-white/20 p-1 rounded-lg"><IconFileText className="w-4 h-4 text-white" /></div>
+                  <div>
+                    <h1 className="font-extrabold text-sm tracking-wide leading-none uppercase">{teacher.name}</h1>
+                    <p className="text-[9px] text-white/80 font-bold mt-0.5">Mode Pengisian Deskripsi Raport</p>
+                  </div>
+               </div>
+               <div className="flex items-center space-x-3">
+                  <button onClick={onForceRefresh} disabled={isFetchingData} className="flex items-center gap-1 bg-black/20 hover:bg-black/40 px-3 py-1.5 rounded-lg font-black transition-colors disabled:opacity-50">
+                     {isFetchingData ? <IconRefresh className="w-3.5 h-3.5 animate-spin"/> : <IconRefresh className="w-3.5 h-3.5"/>} Sync
+                  </button>
+                  <button onClick={onLogout} className="p-1.5 bg-black/20 hover:bg-red-500 rounded-lg transition-all hover:scale-105 shadow-inner" title="Keluar"><IconLogOut className="w-4 h-4" /></button>
+               </div>
+            </header>
+            
+            <main className="flex-1 overflow-y-auto p-3 sm:p-4 max-w-4xl mx-auto w-full space-y-4 pb-10">
+               <div className={`bg-white p-4 rounded-2xl shadow-sm border transition-colors duration-500 ${theme.border}`}>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                     <div className="flex-1">
+                        <label className={`block text-[10px] font-extrabold mb-1.5 uppercase tracking-widest ${theme.text}`}>Pilih Tingkat Kelas (Tergabung)</label>
+                        <select value={selectedKelas} onChange={e => setSelectedKelas(e.target.value)} className={`w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-xs font-black text-slate-800 focus:outline-none cursor-pointer transition-colors bg-slate-50 ${isSAS ? 'focus:border-indigo-500 hover:bg-indigo-50' : 'focus:border-rose-500 hover:bg-rose-50'}`}>
+                           {teacherLevels.length === 0 ? <option value="">-- Tidak Ada Mapel --</option> : null}
+                           {teacherLevels.map(k => <option key={k.level} value={k.level}>{k.level}</option>)}
+                        </select>
+                     </div>
+                     <div className="flex-1">
+                        <label className={`block text-[10px] font-extrabold mb-1.5 uppercase tracking-widest ${theme.text}`}>Pilih Semester</label>
+                        <select value={selectedSemester} onChange={e => setSelectedSemester(e.target.value)} className={`w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-xs font-black text-slate-800 focus:outline-none cursor-pointer transition-colors bg-slate-50 ${isSAS ? 'focus:border-indigo-500 hover:bg-indigo-50' : 'focus:border-rose-500 hover:bg-rose-50'}`}>
+                           <option value="SAS">Semester 1 (SAS)</option>
+                           <option value="SAT">Semester 2 (SAT)</option>
+                        </select>
+                     </div>
+                  </div>
+               </div>
+
+               {selectedKelas && (
+                  <div className={`bg-white p-4 rounded-2xl shadow-sm border animate-in fade-in slide-in-from-bottom-2 transition-colors duration-500 ${theme.border}`}>
+                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pb-3 border-b border-slate-100 gap-3">
+                        <h2 className="font-black text-slate-800 text-sm flex items-center gap-2"><span className="text-xl">📝</span> Pengisian Deskripsi - {selectedKelas} ({selectedSemester})</h2>
+                        <button onClick={handleSave} disabled={isSaving} className={`w-full sm:w-auto text-white px-6 py-2.5 rounded-xl text-xs font-black shadow-md active:scale-95 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 ${theme.btn}`}>
+                           {isSaving ? <IconRefresh className="w-4 h-4 animate-spin"/> : <IconSend className="w-4 h-4"/>} SIMPAN DESKRIPSI
+                        </button>
+                     </div>
+                     
+                     {activeMapels.length === 0 ? (
+                        <div className="text-center py-10 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                           <p className="text-5xl mb-3">🤷‍♂️</p>
+                           <p className="text-slate-500 font-bold text-[11px]">Anda tidak mengajar mapel apapun di tingkat kelas ini.</p>
+                        </div>
+                     ) : (
+                        <div className="flex flex-col gap-5">
+                           {activeMapels.map(mapel => {
+                              const mTheme = MAPEL_THEMES[mapel] || MAPEL_THEMES["KODING"];
+                              return (
+                                <div key={mapel} className="border-2 rounded-2xl p-4 shadow-sm transition-colors" style={{ backgroundColor: mTheme.light, borderColor: mTheme.bg }}>
+                                    <div className="flex justify-between items-center mb-3 border-b border-black/10 pb-2">
+                                        <label className="text-[12px] font-black uppercase tracking-widest flex items-center gap-2" style={{ color: mTheme.textDark }}>
+                                            <span className="w-2.5 h-2.5 rounded-full shadow-inner" style={{ backgroundColor: mTheme.bg }}></span> {mapel}
+                                        </label>
+                                        <button onClick={() => setPasteMapel(mapel)} className="flex items-center gap-1.5 bg-white/60 hover:bg-white text-[10px] px-3 py-1.5 rounded-lg shadow-sm border border-black/10 font-bold active:scale-95 transition-all" style={{ color: mTheme.textDark }}>
+                                            <IconFileText className="w-3.5 h-3.5"/> Paste Excel
+                                        </button>
+                                    </div>
+                                    <div className="flex flex-col gap-3">
+                                        {getDeskCols(mapel).map(col => (
+                                            <div key={col} className="bg-white/60 p-3 rounded-xl border border-black/5 shadow-inner">
+                                                <span className="block text-[10px] font-extrabold mb-1.5 uppercase" style={{ color: mTheme.textDark }}>{col}</span>
+                                                <textarea 
+                                                   rows="2" 
+                                                   className="w-full border border-black/10 rounded-lg p-2.5 text-[11px] font-semibold text-slate-800 focus:bg-white bg-white/50 focus:outline-none transition-all leading-relaxed placeholder-slate-400 focus:border-slate-400" 
+                                                   placeholder={`Ketik deskripsi ${col}...`}
+                                                   value={(deskripsiData[mapel] && deskripsiData[mapel][col]) || ''}
+                                                   onChange={e => handleFieldChange(mapel, col, e.target.value)}
+                                                ></textarea>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                              );
+                           })}
+                        </div>
+                     )}
+                  </div>
+               )}
+            </main>
+         </div>
+      );
+    }
+
     function App() {
       const [masterData, setMasterData] = useState(() => {
           try {
@@ -440,9 +657,11 @@
       return (
         <div className="min-h-screen max-h-screen h-screen bg-slate-50 flex flex-col overflow-hidden text-xs">
           {!currentUser ? (
-            <LoginScreen masterData={masterData} isFetchingData={isFetchingData} onLogin={(user, assignment) => { setCurrentUser(user); setActiveAssignment(assignment); if(user !== 'ADMIN') setPopup({ show: true, type: 'success', index: Math.floor(Math.random() * 10) }); }} onLoginFail={() => setPopup({ show: true, type: 'error', index: Math.floor(Math.random() * 10) })} />
+            <LoginScreen masterData={masterData} isFetchingData={isFetchingData} onLogin={(user, assignment) => { setCurrentUser(user); setActiveAssignment(assignment); if(user !== 'ADMIN' && user?.type !== 'DESKRIPSI') setPopup({ show: true, type: 'success', index: Math.floor(Math.random() * 10) }); }} onLoginFail={() => setPopup({ show: true, type: 'error', index: Math.floor(Math.random() * 10) })} />
           ) : currentUser === 'ADMIN' ? (
             <AdminDashboard masterData={masterData} setMasterData={setMasterData} schemas={currentSchemas} onLogout={() => setCurrentUser(null)} showToast={showToast} toast={toast} onRefreshData={() => fetchCloudMasterData(false)} isFetchingData={isFetchingData} />
+          ) : currentUser?.type === 'DESKRIPSI' ? (
+            <DeskripsiDashboard teacher={currentUser.teacher} masterData={masterData} setMasterData={setMasterData} onLogout={() => setCurrentUser(null)} showToast={showToast} isFetchingData={isFetchingData} onForceRefresh={() => fetchCloudMasterData(false)} schemas={currentSchemas} />
           ) : (
             <Dashboard user={currentUser} activeAssignment={activeAssignment} masterData={masterData} schemas={currentSchemas} onLogout={() => setCurrentUser(null)} showToast={showToast} toast={toast} setActiveAssignment={setActiveAssignment} triggerKocakPopup={(msg, isSAS) => setKocakPopup({show: true, message: msg, isSAS})} isFetchingData={isFetchingData} onForceRefresh={() => fetchCloudMasterData(false)} setMasterData={setMasterData} />
           )}
@@ -462,7 +681,8 @@
     }
 
     function LoginScreen({ masterData, isFetchingData, onLogin, onLoginFail }) {
-      const [mode, setMode] = useState('guru'); 
+      const [activeMenu, setActiveMenu] = useState(null); 
+      
       const [selectedGuru, setSelectedGuru] = useState('');
       const [selectedAssign, setSelectedAssign] = useState('');
       const [password, setPassword] = useState('');
@@ -475,9 +695,13 @@
 
       const handleLogin = (e) => {
         e.preventDefault();
-        if (mode === 'admin') {
+        if (activeMenu === 'admin') {
           if (adminPass === getAdminPassword(masterData)) onLogin('ADMIN', null); else onLoginFail();
-        } else {
+        } else if (activeMenu === 'deskripsi') {
+          if (guruObj && guruObj.password === password) {
+             onLogin({ type: 'DESKRIPSI', teacher: guruObj }, null); 
+          } else onLoginFail();
+        } else if (activeMenu === 'guru') {
           if (guruObj && guruObj.password === password && selectedAssign) {
             if (selectedAssign.startsWith('WALI|')) onLogin(guruObj, { type: 'WALI', classId: selectedAssign.split('|')[1], mapel: 'WALI KELAS' });
             else { const [kelas, mapel] = selectedAssign.split('|'); onLogin(guruObj, { classId: kelas, mapel: mapel }); }
@@ -503,22 +727,102 @@
           );
       }
 
+      if (!activeMenu) {
+         return (
+           <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4 font-sans bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] w-full">
+              <div className="mb-8 text-center animate-in fade-in slide-in-from-top-4 duration-500">
+                 <div className="bg-white p-3 rounded-2xl shadow-lg inline-block mb-4 border border-slate-200 transform -rotate-3 hover:rotate-0 transition-transform">
+                    <img src="icon.png" alt="Logo" onError={(e) => { e.target.onerror = null; e.target.style.display = 'none'; }} className="w-16 h-16 object-contain" />
+                 </div>
+                 <h1 className="text-3xl font-black text-slate-800 tracking-widest drop-shadow-sm">ASTAGA</h1>
+                 <p className="text-slate-500 font-bold text-[10px] tracking-widest uppercase mt-1">Pilih Portal Akses</p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 w-full max-w-sm">
+                 <button onClick={() => setActiveMenu('admin')} className="group relative overflow-hidden bg-slate-800 rounded-3xl p-5 shadow-lg transform transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 hover:shadow-xl active:scale-95 border-b-4 border-slate-900 animate-in fade-in zoom-in slide-in-from-bottom-2" style={{animationDelay: '0ms'}}>
+                    <div className="absolute -right-6 -top-6 w-24 h-24 bg-white opacity-5 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
+                    <div className="flex items-center gap-4 relative z-10">
+                       <div className="bg-slate-700 p-3 rounded-2xl shadow-inner group-hover:rotate-12 transition-transform">
+                          <span className="text-2xl block leading-none">🛠️</span>
+                       </div>
+                       <div className="text-left flex-1">
+                          <h2 className="text-white font-black text-lg tracking-widest leading-none">ADMIN</h2>
+                          <p className="text-slate-400 font-bold text-[9px] uppercase mt-1 tracking-wider leading-none">Pusat Kendali Utama</p>
+                       </div>
+                       <div className="text-slate-500 group-hover:text-white group-hover:translate-x-1 transition-all"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></div>
+                    </div>
+                 </button>
+
+                 <button onClick={() => setActiveMenu('guru')} className="group relative overflow-hidden bg-indigo-600 rounded-3xl p-5 shadow-lg transform transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 hover:shadow-xl active:scale-95 border-b-4 border-indigo-800 animate-in fade-in zoom-in slide-in-from-bottom-4" style={{animationDelay: '100ms'}}>
+                    <div className="absolute -right-6 -top-6 w-24 h-24 bg-white opacity-10 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
+                    <div className="flex items-center gap-4 relative z-10">
+                       <div className="bg-indigo-500 p-3 rounded-2xl shadow-inner group-hover:rotate-12 transition-transform">
+                          <span className="text-2xl block leading-none">📝</span>
+                       </div>
+                       <div className="text-left flex-1">
+                          <h2 className="text-white font-black text-lg tracking-widest leading-none">NILAI</h2>
+                          <p className="text-indigo-200 font-bold text-[9px] uppercase mt-1 tracking-wider leading-none">Input Formatif & Sumatif</p>
+                       </div>
+                       <div className="text-indigo-300 group-hover:text-white group-hover:translate-x-1 transition-all"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></div>
+                    </div>
+                 </button>
+
+                 <button onClick={() => setActiveMenu('deskripsi')} className="group relative overflow-hidden bg-teal-600 rounded-3xl p-5 shadow-lg transform transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 hover:shadow-xl active:scale-95 border-b-4 border-teal-800 animate-in fade-in zoom-in slide-in-from-bottom-6" style={{animationDelay: '200ms'}}>
+                    <div className="absolute -right-6 -top-6 w-24 h-24 bg-white opacity-10 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
+                    <div className="flex items-center gap-4 relative z-10">
+                       <div className="bg-teal-500 p-3 rounded-2xl shadow-inner group-hover:rotate-12 transition-transform">
+                          <span className="text-2xl block leading-none">📋</span>
+                       </div>
+                       <div className="text-left flex-1">
+                          <h2 className="text-white font-black text-lg tracking-widest leading-none">DESKRIPSI</h2>
+                          <p className="text-teal-200 font-bold text-[9px] uppercase mt-1 tracking-wider leading-none">Capaian Kompetensi Raport</p>
+                       </div>
+                       <div className="text-teal-300 group-hover:text-white group-hover:translate-x-1 transition-all"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></div>
+                    </div>
+                 </button>
+              </div>
+           </div>
+         );
+      }
+
+      const getHeaderStyle = () => {
+         if (activeMenu === 'admin') return 'bg-slate-900';
+         if (activeMenu === 'deskripsi') return 'bg-teal-600';
+         return 'bg-indigo-600';
+      };
+
+      const getTitle = () => {
+         if (activeMenu === 'admin') return 'Ruang Kendali Admin';
+         if (activeMenu === 'deskripsi') return 'Input Deskripsi Raport';
+         return 'Asisten Sistem Guru';
+      };
+
+      const handleBack = () => {
+         setActiveMenu(null); setPassword(''); setAdminPass(''); setSelectedGuru(''); setSelectedAssign('');
+      };
+
       return (
         <div className="min-h-screen bg-slate-100 flex items-center justify-center p-3 font-sans bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] w-full">
-          <div className="max-w-sm w-full bg-white rounded-[24px] shadow-xl border border-slate-200 relative animate-in fade-in duration-300 hover:shadow-2xl transition-all">
-            <div className={`p-6 text-center transition-colors duration-500 ${mode === 'admin' ? 'bg-slate-900' : 'bg-indigo-600'}`}>
+          <div className="max-w-sm w-full bg-white rounded-[24px] shadow-2xl border border-slate-200 relative animate-in fade-in zoom-in duration-300 hover:shadow-2xl transition-all">
+            
+            <button type="button" onClick={handleBack} className="absolute -top-3 -left-3 bg-white border-2 border-slate-200 text-slate-500 w-11 h-11 rounded-full shadow-lg flex items-center justify-center hover:bg-slate-50 hover:text-slate-900 hover:scale-110 active:scale-95 transition-all z-50">
+               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="mr-0.5"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+            </button>
+
+            <div className={`p-6 text-center transition-colors duration-500 rounded-t-[24px] ${getHeaderStyle()}`}>
               <div className="bg-white/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-md shadow-inner overflow-hidden relative">
                 <img src="icon.png" alt="Logo ASTAGA" onError={(e) => { e.target.onerror = null; e.target.style.display = 'none'; }} className="w-12 h-12 object-contain" />
-                <IconSettings className={`text-white w-7 h-7 animate-[spin_4s_linear_infinite] ${!document.querySelector('img[src="icon.png"]') ? 'block' : 'hidden'}`} />
               </div>
               <h1 className="text-2xl font-black text-white tracking-widest leading-none animate-pulse">ASTAGA</h1>
-              <p className="text-white/80 text-[10px] font-semibold uppercase tracking-wider mt-1">{mode === 'admin' ? 'Ruang Kendali Admin' : 'Asisten Sistem Terpadu Guru Al Kautsar'}</p>
+              <p className="text-white/80 text-[10px] font-semibold uppercase tracking-wider mt-1">{getTitle()}</p>
             </div>
+            
             <div className="p-6">
               <form onSubmit={handleLogin} className="space-y-4">
-                {mode === 'guru' && (
+                
+                {activeMenu === 'guru' && (
                   <React.Fragment>
-                    <div>
+                    <div className="animate-in slide-in-from-right-4 duration-300">
                       <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">Pilih Nama Guru</label>
                       <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
                         <IconUser className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
@@ -543,31 +847,60 @@
                         </div>
                       </div>
                     )}
+                    <div className="animate-in slide-in-from-left-4 duration-300">
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">Password / PIN</label>
+                      <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
+                        <IconLock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                        <input type="password" placeholder="Masukkan password" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-9 w-full rounded-xl border-2 py-2.5 px-3 text-xs text-slate-800 font-bold bg-slate-50 focus:outline-none border-slate-200 focus:border-indigo-500" required />
+                      </div>
+                    </div>
                   </React.Fragment>
                 )}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">{mode==='admin' ? 'Akses Admin' : 'Password / PIN'}</label>
-                  <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
-                    <IconLock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
-                    <input type="password" placeholder="Masukkan password" value={mode==='admin'?adminPass:password} onChange={(e) => mode==='admin'?setAdminPass(e.target.value):setPassword(e.target.value)} className={`pl-9 w-full rounded-xl border-2 py-2.5 px-3 text-xs text-slate-800 font-bold bg-slate-50 focus:outline-none ${mode==='admin'?'border-slate-300 focus:border-slate-800':'border-slate-200 focus:border-indigo-500'}`} required />
+
+                {activeMenu === 'admin' && (
+                  <div className="animate-in slide-in-from-right-4 duration-300">
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">Kunci Sandi Admin</label>
+                    <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
+                      <IconLock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                      <input type="password" placeholder="Masukkan sandi rahasia" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} className="pl-9 w-full rounded-xl border-2 py-2.5 px-3 text-xs text-slate-800 font-bold bg-slate-50 focus:outline-none border-slate-300 focus:border-slate-800" required />
+                    </div>
                   </div>
-                </div>
-                <button type="submit" className={`w-full text-white font-extrabold rounded-xl py-2.5 shadow-md mt-2 text-xs tracking-wide transition-all duration-300 ${mode==='admin'?'bg-slate-900 hover:bg-slate-800 hover:-translate-y-1':'bg-indigo-600 hover:bg-indigo-700 hover:-translate-y-1'}`}>
-                  {mode==='admin' ? 'BUKA PANEL ADMIN 🗝️' : 'GAS MASUK! 🚀'}
+                )}
+
+                {activeMenu === 'deskripsi' && (
+                  <React.Fragment>
+                    <div className="animate-in slide-in-from-right-4 duration-300">
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">Pilih Nama Guru</label>
+                      <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
+                        <IconUser className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                        <select className="pl-9 w-full rounded-xl border-2 py-2.5 px-3 text-xs text-slate-800 font-bold bg-slate-50 focus:outline-none border-slate-200 focus:border-teal-500 cursor-pointer" value={selectedGuru} onChange={(e) => setSelectedGuru(e.target.value)} required>
+                          <option value="">-- Klik untuk memilih --</option>
+                          {sortedTeachersForLogin.map((t, i) => <option key={i} value={t.name}>{t.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="animate-in slide-in-from-left-4 duration-300">
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">Password / PIN</label>
+                      <div className="relative hover:scale-[1.02] active:scale-95 transition-all duration-300">
+                        <IconLock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                        <input type="password" placeholder="Masukkan password" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-9 w-full rounded-xl border-2 py-2.5 px-3 text-xs text-slate-800 font-bold bg-slate-50 focus:outline-none border-slate-200 focus:border-teal-500" required />
+                      </div>
+                    </div>
+                  </React.Fragment>
+                )}
+
+                <button type="submit" className={`w-full text-white font-extrabold rounded-xl py-3 shadow-lg mt-2 text-xs tracking-wide transition-all duration-300 ${activeMenu==='admin'?'bg-slate-900 hover:bg-slate-800 hover:-translate-y-1':activeMenu==='deskripsi'?'bg-teal-600 hover:bg-teal-700 hover:-translate-y-1':'bg-indigo-600 hover:bg-indigo-700 hover:-translate-y-1'}`}>
+                  {activeMenu==='admin' ? 'BUKA PANEL ADMIN 🗝️' : activeMenu==='deskripsi' ? 'MASUK PENGISIAN 📝' : 'GAS MASUK! 🚀'}
                 </button>
               </form>
-            </div>
-            <div className="bg-slate-50 border-t border-slate-200 p-4 text-center">
-              <button onClick={() => { setMode(mode === 'guru' ? 'admin' : 'guru'); setPassword(''); setAdminPass(''); }} className="text-[11px] font-extrabold text-slate-400 hover:text-indigo-600 transition-colors uppercase tracking-wider">
-                {mode === 'guru' ? '🛠️ Masuk sebagai Admin?' : '👨‍🏫 Kembali ke Login Guru'}
-              </button>
             </div>
           </div>
         </div>
       );
     }
 
-    function AdminDashboard({ masterData, setMasterData, schemas, onLogout, showToast, toast, onRefreshData, isFetchingData }) {
+function AdminDashboard({ masterData, setMasterData, schemas, onLogout, showToast, toast, onRefreshData, isFetchingData }) {
       const [activeTab, setActiveTab] = useState('overview'); 
       const [selectedSemester, setSelectedSemester] = useState('SAS');
       const [isSyncing, setIsSyncing] = useState(false);
@@ -649,6 +982,96 @@
         showToast("Template Master Siswa Premium Berhasil Diunduh!", "success");
       };
 
+// FUNGSI BARU: UNDUH TEMPLATE MATRIX DESKRIPSI (SANGAT MIRIP FOTO EXCEL ASLI!)
+      const downloadTemplateIsiDeskripsi = () => {
+        const mapels = [
+          { name: "PENDIDIKAN AGAMA ISLAM", label: "Pendidikan Agama Islam dan Budi Pekerti", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "F6B26B" }, 
+          { name: "KEMUHAMMADIYAHAN", label: "Kemuhammadiyahan", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "00FFFF" }, 
+          { name: "PENDIDIKAN PANCASILA", label: "Pendidikan Pancasila", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "4A86E8" }, 
+          { name: "BAHASA INDONESIA", label: "Bahasa Indonesia", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "FFFF00" }, 
+          { name: "ILMU PENGETAHUAN ALAM DAN SOSIAL", label: "Ilmu Pengetahuan Alam dan Sosial", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "93C47D" }, 
+          { name: "MATEMATIKA", label: "Matematika", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "FFFF00" }, 
+          { name: "PENDIDIKAN JASMANI, OLAHRAGA DAN KESEHATAN", label: "Pendidikan Jasmani, Olahraga dan Kesehatan", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "00FF00" }, 
+          { name: "BAHASA INGGRIS", label: "Bahasa Inggris", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "0000FF" }, 
+          { name: "KESENIAN", label: "Kesenian", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "FF00FF" }, 
+          { name: "KODING", label: "Koding", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "9900FF" }, 
+          { name: "BAHASA JAWA", label: "Bahasa Jawa", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "00FF00" }, 
+          { name: "BAHASA ARAB", label: "Bahasa Arab", cols: ["TF-1", "TF-2", "TF-3", "TF-4", "TF-5", "TF-6", "TF-7"], bg: "FF0000" }, 
+          { name: "IBADAH (WUDHU, TAYAMUM, SHALAT)", label: "Ibadah", cols: ["Wudhu", "Tayamum", "Shalat"], bg: "FFFF00" }, 
+          { name: "TAHFIDZ", label: "Tahfidz", cols: ["TF-1"], bg: "00FFFF" }, 
+          { name: "IQRA'", label: "Iqra'", cols: ["TF-1"], bg: "00FF00" } 
+        ];
+
+        const classes = ["1", "2", "3", "4", "5", "6", "1 ICP", "2 ICP", "3 ICP"];
+        const classColors = {
+            "1": "FFFF00", "2": "B6D7A8", "3": "D5A6BD", "4": "9FC5E8", 
+            "5": "FCE5CD", "6": "F6B26B", "1 ICP": "93C47D", "2 ICP": "FF00FF", "3 ICP": "00FFFF"
+        };
+        
+        const createSheetData = (semesterLabel) => {
+            const aoa = []; const merges = []; const cols = [{wch: 8}]; 
+            
+            const row0 = [semesterLabel]; let cIdx = 1;
+            mapels.forEach(m => {
+                row0.push(m.label);
+                for(let i=1; i<m.cols.length; i++) row0.push("");
+                merges.push({s: {r:0, c:cIdx}, e: {r:0, c:cIdx + m.cols.length - 1}});
+                cIdx += m.cols.length;
+            }); aoa.push(row0);
+
+            const row1 = ["KELAS"];
+            mapels.forEach(m => { m.cols.forEach(colName => { row1.push(colName); cols.push({wch: 25}); }); });
+            aoa.push(row1);
+
+            classes.forEach(cls => {
+                const row = [cls]; mapels.forEach(m => m.cols.forEach(() => row.push("")));
+                aoa.push(row);
+            });
+
+            const ws = XLSX.utils.aoa_to_sheet(aoa);
+            ws['!merges'] = merges; ws['!cols'] = cols;
+            
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            for(let R = range.s.r; R <= range.e.r; ++R) {
+               for(let C = range.s.c; C <= range.e.c; ++C) {
+                  const cellRef = XLSX.utils.encode_cell({c:C, r:R});
+                  if(!ws[cellRef]) continue;
+                  let bg = "FFFFFF", bold = false, align = "left", fontColor = "000000";
+                  
+                  if (R === 0) {
+                      bold = true; align = "center";
+                      if (C === 0) bg = "FFFF00"; 
+                      else { let acc = 1; for(let m of mapels) { if (C >= acc && C < acc + m.cols.length) { bg = m.bg; break; } acc += m.cols.length; } }
+                      if (bg === "0000FF" || bg === "FF0000" || bg === "9900FF" || bg === "4A86E8") fontColor = "FFFFFF";
+                  } else if (R === 1) {
+                      bold = true; align = "center";
+                      if (C === 0) bg = "00FFFF"; 
+                      else { let acc = 1; for(let m of mapels) { if (C >= acc && C < acc + m.cols.length) { bg = m.bg; break; } acc += m.cols.length; } }
+                      if (bg === "0000FF" || bg === "FF0000" || bg === "9900FF" || bg === "4A86E8") fontColor = "FFFFFF";
+                  } else {
+                      bg = classColors[classes[R-2]] || "FFFFFF";
+                      if (C === 0) { bold = true; align = "center"; } 
+                  }
+                  
+                  ws[cellRef].s = { 
+                      fill: { fgColor: { rgb: bg } }, font: { bold: bold, color: { rgb: fontColor } }, 
+                      alignment: { horizontal: align, vertical: R===0||R===1?"center":"top", wrapText: true }, 
+                      border: { top: {style:"thin", color:{rgb:"000000"}}, bottom: {style:"thin", color:{rgb:"000000"}}, left: {style:"thin", color:{rgb:"000000"}}, right: {style:"thin", color:{rgb:"000000"}} } 
+                  };
+               }
+            }
+            const rowsHeights = [{hpx: 25}, {hpx: 20}]; for(let i=0; i<classes.length; i++) rowsHeights.push({hpx: 60});
+            ws['!rows'] = rowsHeights; ws['!views'] = [{state: 'frozen', xSplit: 1, ySplit: 2}];
+            return ws;
+        };
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, createSheetData("SAS"), "SAS");
+        XLSX.utils.book_append_sheet(wb, createSheetData("SAT"), "SAT");
+        XLSX.writeFile(wb, "Template_Master_Deskripsi_Matrix.xlsx");
+        showToast("Template Matrix Deskripsi SAS & SAT Berhasil Diunduh!", "success");
+      };
+
       const syncToCloud = async (action, payloadKey, payloadData, successMsg) => {
         setIsSyncing(true);
         try {
@@ -665,14 +1088,14 @@
         } catch (err) { showToast("Gagal reset. Cek koneksi!", "error"); } finally { setIsSyncing(false); }
       };
 
-      // FITUR BARU: AUTO-CORRECTOR NAMA MAPEL DARI SINGKATAN
+      // FUNGSI STANDARDIZASI (SUPER CERDAS - MENDETEKSI NAMA PANJANG)
       const standardizeMapel = (str) => {
         const raw = str.toUpperCase().trim();
-        if (raw === 'PAI' || raw === 'AGAMA') return 'PENDIDIKAN AGAMA ISLAM';
-        if (raw === 'PKN' || raw === 'PPKN' || raw === 'PANCASILA') return 'PENDIDIKAN PANCASILA';
+        if (raw.includes('AGAMA ISLAM') || raw === 'PAI') return 'PENDIDIKAN AGAMA ISLAM';
+        if (raw.includes('PANCASILA') || raw === 'PKN' || raw === 'PPKN') return 'PENDIDIKAN PANCASILA';
+        if (raw.includes('JASMANI') || raw === 'PJOK' || raw === 'PENJAS' || raw === 'OLAHRAGA') return 'PENDIDIKAN JASMANI, OLAHRAGA DAN KESEHATAN';
         if (raw === 'B. INDO' || raw === 'B. INDONESIA' || raw === 'B INDONESIA' || raw === 'BINDO') return 'BAHASA INDONESIA';
         if (raw === 'MTK' || raw === 'MAT') return 'MATEMATIKA';
-        if (raw === 'PJOK' || raw === 'PENJAS' || raw === 'OLAHRAGA') return 'PENDIDIKAN JASMANI, OLAHRAGA DAN KESEHATAN';
         if (raw === 'B. INGGRIS' || raw === 'B INGGRIS' || raw === 'BING' || raw === 'ENGLISH') return 'BAHASA INGGRIS';
         if (raw === 'SBO' || raw === 'SBDP' || raw === 'SENI' || raw === 'SENI BUDAYA') return 'KESENIAN';
         if (raw === 'B. JAWA' || raw === 'B JAWA') return 'BAHASA JAWA';
@@ -704,7 +1127,6 @@
                   for(let i = 0; i < 5; i++) {
                     const mIdx = 4 + (i * 2); const kIdx = 5 + (i * 2);
                     if (parts[mIdx] !== undefined && parts[kIdx] !== undefined) {
-                       // Menerapkan Auto-Corrector di sini
                        const mName = standardizeMapel(parts[mIdx].toString().trim());
                        const kArr = String(parts[kIdx]).split(',').map(k => k.trim()).filter(k => k);
                        if (mName && kArr.length > 0) { kArr.forEach(k => { if(!teachersMap[nama].assignments.find(a => a.classId === k && a.mapel === mName)) teachersMap[nama].assignments.push({ classId: k, mapel: mName }); }); }
@@ -742,6 +1164,85 @@
         }; reader.readAsArrayBuffer(file); e.target.value = ''; 
       };
 
+      // FUNGSI UPLOAD PEMBACA MATRIX DUA SHEET SEKALIGUS
+      const handleUploadIsiDeskripsi = (e) => {
+        const file = e.target.files[0]; if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const data = new Uint8Array(evt.target.result); 
+            const workbook = XLSX.read(data, {type: 'array'});
+            if (!workbook.SheetNames.length) { showToast("File Excel kosong!", "error"); return; }
+            
+            const bulkData = {}; 
+            let imported = 0;
+
+            workbook.SheetNames.forEach(sheetName => {
+                const sheet = workbook.Sheets[sheetName];
+                const rows = XLSX.utils.sheet_to_json(sheet, {header: 1, defval: ""});
+                if (rows.length < 3) return; 
+
+                // Tentukan Semester otomatis
+                let semester = "SAS";
+                let a1 = String(rows[0][0]).toUpperCase();
+                if (a1.includes("SAT") || sheetName.toUpperCase().includes("SAT")) semester = "SAT";
+                else if (a1.includes("SAS") || sheetName.toUpperCase().includes("SAS")) semester = "SAS";
+
+                const mapelHeaders = rows[0];
+                const itemHeaders = rows[1];
+                
+                const colMapMapel = [];
+                let currentMapel = "";
+                for (let c = 1; c < itemHeaders.length; c++) {
+                    if (mapelHeaders[c] && String(mapelHeaders[c]).trim() !== "") {
+                        currentMapel = standardizeMapel(String(mapelHeaders[c]).trim());
+                    }
+                    colMapMapel[c] = currentMapel;
+                }
+
+                for (let r = 2; r < rows.length; r++) {
+                    const row = rows[r];
+                    if (!row || !row[0]) continue;
+                    
+                    let kelasRaw = String(row[0]).trim().toUpperCase();
+                    if (!kelasRaw) continue;
+                    let kelas = kelasRaw.startsWith("KELAS") ? kelasRaw : `KELAS ${kelasRaw}`;
+
+                    for (let c = 1; c < itemHeaders.length; c++) {
+                        let mapel = colMapMapel[c];
+                        let item = itemHeaders[c] ? String(itemHeaders[c]).trim() : "";
+                        let isi = row[c] ? String(row[c]).trim() : "";
+
+                        if (mapel && item && isi) {
+                            const key = `${kelas}_${semester}`;
+                            if (!bulkData[key]) bulkData[key] = {};
+                            if (!bulkData[key][mapel]) bulkData[key][mapel] = {};
+                            bulkData[key][mapel][item] = isi;
+                            imported++;
+                        }
+                    }
+                }
+            });
+            
+            if(Object.keys(bulkData).length > 0) { 
+                setIsSyncing(true);
+                fetch(SCRIPT_URL, {
+                    method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "saveBulkDeskripsi", bulkData: bulkData })
+                }).then(() => {
+                    showToast(`Berhasil menyedot ${imported} data dari Matrix SAS & SAT!`, "success");
+                    setIsSyncing(false);
+                    onRefreshData();
+                }).catch(() => {
+                    showToast(`Gagal mengirim ke Cloud!`, "error");
+                    setIsSyncing(false);
+                });
+            } else {
+                showToast(`Data kosong! Pastikan format baris 1 (Mapel) & 2 (TF) sudah benar.`, 'error');
+            }
+          } catch(err) { showToast(`Gagal membaca struktur Matrix.`, 'error'); }
+        }; reader.readAsArrayBuffer(file); e.target.value = ''; 
+      };      
       return (
         <div className={`h-screen max-h-screen flex flex-col font-sans text-xs overflow-hidden transition-colors duration-500 ${adminTheme.bg}`}>
           <FunnyDeletePopup show={showResetConfirm} targetName="Seluruh Rekap Nilai" type="class" onConfirm={handleResetGrades} onCancel={() => setShowResetConfirm(false)} />
@@ -830,6 +1331,7 @@
                     <input type="file" accept=".xls,.xlsx,.csv" className="hidden" onChange={handleUploadGuru} />
                   </div>
                 </div>
+                
                 <div className={`bg-gradient-to-br rounded-2xl shadow-sm border flex flex-col p-5 ${isSAS ? 'from-emerald-50/60 to-emerald-50/10 border-emerald-200' : 'from-orange-50/60 to-orange-50/10 border-orange-200'}`}>
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex items-center gap-2"><IconGraduationCap className={`w-5 h-5 bg-white p-1 rounded-lg shadow-inner ${isSAS ? 'text-emerald-500' : 'text-orange-500'}`}/><h2 className="text-sm font-black text-slate-800">Master Siswa</h2></div>
@@ -841,6 +1343,20 @@
                     <input type="file" accept=".xls,.xlsx,.csv" className="hidden" onChange={handleUploadSiswa} />
                   </div>
                 </div>
+                
+                {/* MENU BARU: DEFAULT ISI DESKRIPSI (MATRIX) */}
+                <div className={`col-span-1 md:col-span-2 bg-gradient-to-br rounded-2xl shadow-sm border flex flex-col p-5 ${isSAS ? 'from-teal-50/60 to-teal-50/10 border-teal-200' : 'from-cyan-50/60 to-cyan-50/10 border-cyan-200'}`}>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-2"><IconFileText className={`w-5 h-5 bg-white p-1 rounded-lg shadow-inner ${isSAS ? 'text-teal-500' : 'text-cyan-500'}`}/><h2 className="text-sm font-black text-slate-800">Default Teks Deskripsi Mapel</h2></div>
+                    <button onClick={downloadTemplateIsiDeskripsi} className={`bg-white border font-bold px-2 py-1 rounded text-[9px] ${isSAS ? 'text-teal-600' : 'text-cyan-600'}`}>Template</button>
+                  </div>
+                  <div className={`border-2 border-dashed rounded-xl p-4 text-center bg-white/80 cursor-pointer group hover:bg-white ${isSAS ? 'border-teal-300' : 'border-cyan-300'}`} onClick={e=>{if(e.target.tagName!=='INPUT') e.currentTarget.querySelector('input').click()}}>
+                    <IconUploadCloud className={`w-7 h-7 mx-auto mb-1 ${isSAS ? 'text-teal-400 group-hover:text-teal-600' : 'text-cyan-400 group-hover:text-cyan-600'}`} />
+                    <span className={`text-[10px] font-extrabold ${isSAS ? 'text-slate-600 group-hover:text-teal-800' : 'text-slate-600 group-hover:text-cyan-800'}`}>Klik & Pilih Excel Teks Default Deskripsi</span>
+                    <input type="file" accept=".xls,.xlsx,.csv" className="hidden" onChange={handleUploadIsiDeskripsi} />
+                  </div>
+                </div>
+
                 <div className="bg-red-50 border border-red-300 rounded-2xl p-5 col-span-1 md:col-span-2 shadow-sm hover:scale-[1.01] transition-all">
                   <div className="flex items-center gap-2 mb-2"><IconAlertCircle className="w-4 h-4 text-red-500 bg-white p-0.5 rounded shadow-inner" /><h2 className="text-sm font-black text-red-950">Zona Bahaya</h2></div>
                   <p className="text-red-800 text-[10px] mb-3 font-bold">Hapus semua tab nilai di Google Sheets. Master guru/siswa aman.</p>
@@ -1272,8 +1788,9 @@
                 if (k !== 'penguji') {
                     const val = studentGrades[k];
                     if (val !== '' && val !== undefined && val !== null && !isNaN(val)) {
-                        if (Number(val) < 70) {
-                            triggerKocakPopup(`Eh eh, si ${student.name} masih ada nilai merah tuh (< 70)! 🚨 Tolong dong dikatrol dikit aja biar bisa dikirim~ 🙏🥺`, isSAS);
+                        const isSTS = k.toUpperCase().includes('STS');
+                        if (!isSTS && Number(val) < 70) {
+                            triggerKocakPopup(`Eh eh, si ${student.name} masih ada nilai merah tuh (< 70) di luar STS! 🚨 Tolong dong dikatrol dikit aja biar bisa dikirim~ 🙏🥺`, isSAS);
                             return;
                         }
                     }
@@ -1470,9 +1987,9 @@
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden mt-3 mx-2 sm:mx-4 mb-2">
               <div className="flex-none p-3 sm:p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border border-slate-200 bg-white rounded-t-2xl shadow-sm z-50">
                 <h2 className={`text-xs sm:text-sm font-black truncate text-left ${theme.modalTextH2} flex-1`}>👑 REKAPITULASI WALI KELAS - KELAS {classId} ({selectedSemester})</h2>
-                <div className="flex flex-wrap w-full sm:w-auto items-center justify-start sm:justify-end gap-1.5 mt-1 sm:mt-0">
-                   <button onClick={() => onForceRefresh()} disabled={isFetchingData} className={`flex items-center justify-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-1.5 rounded-lg text-[10px] font-black shadow-sm transition-colors disabled:opacity-50`}>{isFetchingData ? <IconRefresh className="w-3 h-3 animate-spin"/> : <IconRefresh className="w-3 h-3"/>} Sync Data</button>
-                   <button onClick={downloadDetailedGradesExcel} className={`flex items-center justify-center gap-1 bg-sky-50 border border-sky-200 text-sky-700 px-3 py-1.5 rounded-lg text-[10px] font-black shadow-sm transition-colors`}><IconDownload className="w-3 h-3"/> Unduh Excel</button>
+                <div className="grid grid-cols-2 sm:flex sm:flex-row w-full sm:w-auto gap-2">
+                   <button onClick={() => onForceRefresh()} disabled={isFetchingData} className={`flex flex-col sm:flex-row items-center justify-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 py-2 sm:px-4 sm:py-2.5 rounded-xl text-[10px] sm:text-[11px] font-black active:scale-95 shadow-sm transition-colors disabled:opacity-50 leading-tight`}>{isFetchingData ? <IconRefresh className="w-4 h-4 animate-spin"/> : <IconRefresh className="w-4 h-4"/>} <span>Sync Data</span></button>
+                   <button onClick={downloadDetailedGradesExcel} className={`flex flex-col sm:flex-row items-center justify-center gap-1 bg-sky-50 border border-sky-200 text-sky-700 py-2 sm:px-4 sm:py-2.5 rounded-xl text-[10px] sm:text-[11px] font-black active:scale-95 shadow-sm transition-colors leading-tight`}><IconDownload className="w-4 h-4"/> <span>Unduh Excel</span></button>
                 </div>
               </div>
               <div className={`flex-1 overflow-auto relative rounded-b-2xl border-x border-b border-slate-200 bg-white`}>
@@ -1618,25 +2135,38 @@
 
             {isWaliMode ? renderWaliKelasView() : (
               <div className={`flex-1 flex flex-col overflow-hidden bg-white rounded-2xl shadow-sm border mt-1 min-h-0 mx-2 sm:mx-4 mb-2 transition-colors duration-500 ${theme.border}`}>
-                <div className="flex-none bg-slate-50 p-2 sm:p-3 border-b border-slate-200">
-                   <div className="flex items-center justify-start sm:justify-between gap-4 overflow-x-auto scrollbar-hide w-full pb-1">
-                     <div className="flex items-center gap-1.5 flex-none">
-                       <button onClick={downloadDetailedGradesExcel} className={`flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white border border-slate-300 ${isSAS ? 'text-indigo-700 hover:bg-indigo-50' : 'text-rose-700 hover:bg-rose-50'} px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black active:scale-95 shadow-sm whitespace-nowrap transition-colors`}><IconDownload className="w-3 h-3"/> Unduh Excel</button>
-                       <button onClick={() => fileUploadRef.current.click()} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-emerald-100 active:scale-95 shadow-sm whitespace-nowrap"><IconUploadCloud className="w-3 h-3"/> Upload</button>
-                       <input type="file" accept=".xls,.xlsx" ref={fileUploadRef} onChange={handleUploadExcelGrades} className="hidden" />
-                       <div className="hidden sm:block w-px h-5 bg-slate-300 mx-1"></div>
-                       <button onClick={() => setShowPasteModal(true)} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-100 active:scale-95 shadow-sm whitespace-nowrap"><IconFileText className="w-3 h-3"/> Paste</button>
-                       <button onClick={handleUndo} disabled={historyIndex <= 0} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white text-slate-700 border border-slate-300 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-50 disabled:opacity-40 shadow-sm whitespace-nowrap">↩️ Undo</button>
-                       <button onClick={handleRedo} disabled={historyIndex >= gradesHistory.length - 1} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-white text-slate-700 border border-slate-300 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-50 disabled:opacity-40 shadow-sm whitespace-nowrap">↪️ Redo</button>
-                     </div>
-                     <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto flex-1 sm:flex-none mt-1 sm:mt-0">
-                       <button onClick={() => onForceRefresh()} disabled={isFetchingData} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-sky-50 border border-sky-200 text-sky-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-sky-100 active:scale-95 shadow-sm whitespace-nowrap disabled:opacity-50">{isFetchingData ? <IconRefresh className="w-3 h-3 animate-spin"/> : <IconRefresh className="w-3 h-3"/>} Tarik Data</button>
-                       <div className="hidden sm:block w-px h-5 bg-slate-300 mx-1"></div>
-                       <button onClick={() => { const r = {}; classStudents.forEach(s => r[s.id] = colData.keys.reduce((acc, col) => ({ ...acc, [col]: '' }), {})); updateGrades(r); showToast("Layar Dikosongkan!", "success"); }} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-slate-100 border border-slate-300 text-slate-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-slate-200 active:scale-95 shadow-sm whitespace-nowrap">🗑️ Kosong</button>
-                       <button onClick={() => setShowConfirmReset(true)} className="flex-auto sm:flex-none justify-center flex items-center gap-1 bg-rose-100 border border-rose-300 text-rose-700 px-3 py-2 sm:py-1.5 rounded-lg text-[10px] font-black hover:bg-rose-200 active:scale-95 shadow-sm whitespace-nowrap">⚠️ Reset</button>
-                       <button onClick={handleSaveToSpreadsheet} disabled={isSaving || classStudents.length === 0} className={`flex-auto sm:flex-none justify-center flex items-center space-x-1 active:scale-95 text-white px-5 py-2 sm:py-1.5 rounded-lg transition-colors shadow-md disabled:opacity-50 font-black text-[10px] whitespace-nowrap ${theme.headerBg} hover:opacity-90`}>{isSaving ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span> : <IconSend className="w-3 h-3" />}<span>Kirim</span></button>
-                     </div>
+                <div className="flex-none bg-slate-50 p-2 border-b border-slate-200 flex flex-col sm:flex-row gap-2">
+                   
+                   {/* KELOMPOK 1: FILE & HISTORY (Kiri) */}
+                   <div className="grid grid-cols-5 sm:flex sm:flex-row items-stretch gap-1.5 w-full sm:w-auto">
+                     <button onClick={downloadDetailedGradesExcel} className={`flex flex-col sm:flex-row items-center justify-center gap-1 bg-white border border-slate-300 ${isSAS ? 'text-indigo-700 hover:bg-indigo-50' : 'text-rose-700 hover:bg-rose-50'} py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black active:scale-95 shadow-sm transition-colors leading-tight`}><IconDownload className="w-3.5 h-3.5"/> <span>Unduh</span></button>
+                     
+                     <button onClick={() => fileUploadRef.current.click()} className="flex flex-col sm:flex-row items-center justify-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black hover:bg-emerald-100 active:scale-95 shadow-sm leading-tight"><IconUploadCloud className="w-3.5 h-3.5"/> <span>Upload</span></button>
+                     
+                     <input type="file" accept=".xls,.xlsx" ref={fileUploadRef} onChange={handleUploadExcelGrades} className="hidden" />
+                     
+                     <button onClick={() => setShowPasteModal(true)} className="flex flex-col sm:flex-row items-center justify-center gap-1 bg-white border border-slate-300 text-slate-700 py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black hover:bg-slate-100 active:scale-95 shadow-sm leading-tight"><IconFileText className="w-3.5 h-3.5"/> <span>Paste</span></button>
+                     
+                     <button onClick={handleUndo} disabled={historyIndex <= 0} className="flex flex-col sm:flex-row items-center justify-center gap-1 bg-white text-slate-700 border border-slate-300 py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black hover:bg-slate-50 disabled:opacity-40 shadow-sm leading-tight"><span className="text-sm sm:text-xs leading-none mb-[-2px] sm:mb-0">↩️</span> <span>Undo</span></button>
+                     
+                     <button onClick={handleRedo} disabled={historyIndex >= gradesHistory.length - 1} className="flex flex-col sm:flex-row items-center justify-center gap-1 bg-white text-slate-700 border border-slate-300 py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black hover:bg-slate-50 disabled:opacity-40 shadow-sm leading-tight"><span className="text-sm sm:text-xs leading-none mb-[-2px] sm:mb-0">↪️</span> <span>Redo</span></button>
                    </div>
+                   
+                   {/* KELOMPOK 2: AKSI SERVER (Kanan) */}
+                   <div className="grid grid-cols-4 sm:flex sm:flex-row items-stretch gap-1.5 w-full sm:w-auto sm:ml-auto">
+                     <button onClick={() => onForceRefresh()} disabled={isFetchingData} className="flex flex-col sm:flex-row items-center justify-center gap-1 bg-sky-50 border border-sky-200 text-sky-700 py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black hover:bg-sky-100 active:scale-95 shadow-sm disabled:opacity-50 leading-tight text-center">
+                       {isFetchingData ? <IconRefresh className="w-3.5 h-3.5 animate-spin"/> : <IconRefresh className="w-3.5 h-3.5"/>} <span>Sync</span>
+                     </button>
+                     
+                     <button onClick={() => { const r = {}; classStudents.forEach(s => r[s.id] = colData.keys.reduce((acc, col) => ({ ...acc, [col]: '' }), {})); updateGrades(r); showToast("Layar Dikosongkan!", "success"); }} className="flex flex-col sm:flex-row items-center justify-center gap-1 bg-slate-100 border border-slate-300 text-slate-700 py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black hover:bg-slate-200 active:scale-95 shadow-sm leading-tight text-center"><span className="text-sm sm:text-xs leading-none mb-[-2px] sm:mb-0">🗑️</span> <span>Clear</span></button>
+                     
+                     <button onClick={() => setShowConfirmReset(true)} className="flex flex-col sm:flex-row items-center justify-center gap-1 bg-rose-100 border border-rose-300 text-rose-700 py-1.5 sm:px-3 rounded-lg text-[9px] sm:text-[10px] font-black hover:bg-rose-200 active:scale-95 shadow-sm leading-tight text-center"><span className="text-sm sm:text-xs leading-none mb-[-2px] sm:mb-0">⚠️</span> <span>Reset</span></button>
+                     
+                     <button onClick={handleSaveToSpreadsheet} disabled={isSaving || classStudents.length === 0} className={`flex flex-col sm:flex-row items-center justify-center gap-1 active:scale-95 text-white py-1.5 sm:px-4 rounded-lg transition-colors shadow-md disabled:opacity-50 font-black text-[9px] sm:text-[10px] leading-tight text-center ${theme.headerBg} hover:opacity-90`}>
+                       {isSaving ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span> : <IconSend className="w-3.5 h-3.5" />}<span>Kirim</span>
+                     </button>
+                   </div>
+                   
                 </div>
 
                 <div className="flex-1 overflow-auto relative bg-white rounded-b-2xl">
